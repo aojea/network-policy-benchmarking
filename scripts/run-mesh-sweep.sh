@@ -23,9 +23,10 @@ set -ex
 # =============================================================================
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${DIR}/.." && pwd)"
 MESH_SWEEPS=(5000 50 10)
 
-CILIUM_IDENTITY_CRD="${DIR}/manifests/crds/ciliumidentities.yaml"
+CILIUM_IDENTITY_CRD="${REPO_ROOT}/manifests/crds/ciliumidentities.yaml"
 
 # Guard: bidirectional mesh needs ~2N entries per endpoint. Refuse to run a
 # tier that would overflow the configured per-endpoint policy map.
@@ -130,7 +131,7 @@ for ppr in "${MESH_SWEEPS[@]}"; do
     export REPORT_TAG="QPS500_${num_identities}identities_${ppr}ppr_mesh"
     export RESTART_CILIUM=false
 
-    ./run-test.sh
+    "${DIR}/run-test.sh"
 
     echo "Finished MESH benchmark for ${num_identities} identities (${ppr} pods/RS)"
 done

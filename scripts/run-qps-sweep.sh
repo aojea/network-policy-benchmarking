@@ -7,6 +7,7 @@ MASTER_NODE=$(kubectl get nodes -l node-role.kubernetes.io/control-plane -o json
 PROJECT="${PROJECT:-gke-maspinwall-dev-2}"
 CLUSTER_ZONE="${CLUSTER_ZONE:-us-east1-b}"
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 for qps in "${QPS_VALUES[@]}"; do
     burst=$((qps * 2))
 
@@ -39,7 +40,7 @@ for qps in "${QPS_VALUES[@]}"; do
     
     echo "Running benchmark for QPS $qps..."
     export CL2_QPS=$qps
-    ./run-test.sh
+    "${DIR}/run-test.sh"
     
     echo "Finished benchmark for QPS $qps"
 done

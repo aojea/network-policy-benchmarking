@@ -9,6 +9,7 @@ set -ex
 IDENTITY_SWEEPS=(5000 50 10 1)
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${DIR}/.." && pwd)"
 
 for ppr in "${IDENTITY_SWEEPS[@]}"; do
     num_identities=$((35000 / ppr))
@@ -23,7 +24,7 @@ for ppr in "${IDENTITY_SWEEPS[@]}"; do
     # Fast identity purge so each tier starts with a pristine slate
     kubectl delete crd ciliumidentities.cilium.io || true
     sleep 3
-    kubectl apply -f "${DIR}/manifests/crds/ciliumidentities.yaml" || true
+    kubectl apply -f "${REPO_ROOT}/manifests/crds/ciliumidentities.yaml" || true
     sleep 2
 
     echo "==================================================================="
@@ -37,7 +38,7 @@ for ppr in "${IDENTITY_SWEEPS[@]}"; do
     export REPORT_TAG="QPS500_${num_identities}identities_${ppr}ppr_microseg"
     export RESTART_CILIUM=false
     
-    ./run-test.sh
+    "${DIR}/run-test.sh"
     
     echo "Finished benchmark for $num_identities identities ($ppr pods/RS)"
 done

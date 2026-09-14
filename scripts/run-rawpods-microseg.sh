@@ -12,4 +12,5 @@ export CL2_BURST=5000
 export REPORT_TAG="QPS500_35000identities_rawpods_microseg"
 export RESTART_CILIUM=false
 
-./run-test.sh
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"${DIR}/run-test.sh"

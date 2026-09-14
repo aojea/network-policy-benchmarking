@@ -1,7 +1,8 @@
 #!/bin/bash
 set -ex
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${DIR}"
+REPO_ROOT="$(cd "${DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
 
 export KOPS_STATE_STORE="${KOPS_STATE_STORE:-gs://kops-maspinwall-state}"
 KOPS_BIN="${KOPS_BIN:-kops}"
@@ -29,11 +30,11 @@ ${KOPS_BIN} create cluster \
   --set spec.kubeAPIServer.eventTTL=5m \
   --set spec.etcdClusters[*].etcdMembers[*].volumeSize=120 \
   --dry-run \
-  -o yaml > ${CLUSTER_NAME}.yaml
+  -o yaml > "${CLUSTER_NAME}.yaml"
 
-python3 patch_yaml.py ${CLUSTER_NAME}.yaml
+python3 "${DIR}/patch_yaml.py" "${CLUSTER_NAME}.yaml"
 
-${KOPS_BIN} replace -f ${CLUSTER_NAME}.yaml --force
+${KOPS_BIN} replace -f "${CLUSTER_NAME}.yaml" --force
 ${KOPS_BIN} update cluster --name=${CLUSTER_NAME} --yes --admin
 
 echo "Cluster creation started. Waiting for 25m..."

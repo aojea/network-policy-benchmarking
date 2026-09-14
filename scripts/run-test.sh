@@ -2,8 +2,9 @@
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CL2_DIR="${CL2_DIR:-${DIR}/../perf-tests/clusterloader2}"
-TEST_CONFIG_DIR="${DIR}/manifests/agentic-sandbox"
+REPO_ROOT="$(cd "${DIR}/.." && pwd)"
+CL2_DIR="${CL2_DIR:-${REPO_ROOT}/../perf-tests/clusterloader2}"
+TEST_CONFIG_DIR="${REPO_ROOT}/manifests/agentic-sandbox"
 
 export PROJECT="${PROJECT:-gke-maspinwall-dev-2}"
 export CLUSTER_NAME="${CLUSTER_NAME:-$(kubectl config current-context)}"
@@ -11,7 +12,7 @@ export CLUSTER_ZONE="${CLUSTER_ZONE:-us-east1-b}"
 
 export CL2_QPS="${CL2_QPS:-100}"
 REPORT_TAG="${REPORT_TAG:-QPS${CL2_QPS}}"
-REPORT_DIR="${DIR}/artifacts_pods/${CLUSTER_NAME}_${REPORT_TAG}_$(date +"%Y-%m-%d_%H-%M-%S")"
+REPORT_DIR="${REPO_ROOT}/artifacts_pods/${CLUSTER_NAME}_${REPORT_TAG}_$(date +"%Y-%m-%d_%H-%M-%S")"
 
 export ARTIFACTS="${REPORT_DIR}"
 export RUN_ORIGINAL_SCRIPTS=false
