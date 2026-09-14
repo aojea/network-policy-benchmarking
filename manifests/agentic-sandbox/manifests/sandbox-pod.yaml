@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+  labels:
+    group: sandbox
+    group-id: "{{.Iter}}"
+    sandbox-id: "{{.Name}}"
+spec:
+  enableServiceLinks: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  {{if .UseHTScheduler}}
+  schedulerName: gke.io/high-throughput-scheduler
+  {{end}}
+  initContainers:
+  - name: wait-for-gateway
+    image: {{.Image}}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      if [ -z "$GATEWAY_SERVICE_0_SERVICE_HOST" ]; then
+        echo "GATEWAY_SERVICE_0_SERVICE_HOST is not set" >&2
+        exit 1
+      fi;
+      if [ -z "$GATEWAY_SERVICE_0_SERVICE_PORT" ]; then
+        echo "GATEWAY_SERVICE_0_SERVICE_PORT is not set" >&2
+        exit 1
+      fi;
+      start_cs=$(cut -d' ' -f1 /proc/uptime | sed 's/\.//');
+      until nc -z -w 1 $GATEWAY_SERVICE_0_SERVICE_HOST $GATEWAY_SERVICE_0_SERVICE_PORT; do
+        sleep 0.1;
+      done;
+      end_cs=$(cut -d' ' -f1 /proc/uptime | sed 's/\.//');
+      latency_ms=$(((end_cs - start_cs) * 10));
+      echo "Latency: ${latency_ms} ms";
+  containers:
+  - name: sandbox
+    image: {{.Image}}
+    command: ["/bin/sleep"]
+    args: ["900000"]
+    resources:
+      requests:
+        cpu: "{{.CpuRequest}}"
+        memory: "{{.MemoryRequest}}"
+      limits:
+        cpu: "{{.CpuLimit}}"
+        memory: "{{.MemoryLimit}}"

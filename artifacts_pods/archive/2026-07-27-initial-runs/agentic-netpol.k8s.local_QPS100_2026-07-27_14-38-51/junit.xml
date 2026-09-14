@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+  <testsuite name="ClusterLoaderV2" tests="0" failures="2" errors="0" time="1077.908">
+      <testcase name="agentic-sandboxes overall (/usr/local/google/home/maspinwall/oss/benchmark-results/manifests/agentic-sandbox/config.yaml)" classname="ClusterLoaderV2" time="1077.88630866">
+          <failure type="Failure">:0&#xA;[measurement call WaitForRunningPods - WaitForOldPodsDeleted-Final error: got context deadline exceeded while waiting for 0 pods to be running in labelSelector(group = sandbox) - summary of pods : Pods: 8693 out of 0 created, 8693 running (8693 updated), 0 pending scheduled, 0 not scheduled, 0 inactive, 3074 terminating, 0 unknown, 0 runningButNotReady ]&#xA;:0</failure>
+      </testcase>
+      <testcase name="agentic-sandboxes: [step: 01] Phase 0 - Setup Default Deny Policy" classname="ClusterLoaderV2" time="0.200281342"></testcase>
+      <testcase name="agentic-sandboxes: [step: 02] Phase 0 - Setup Global allow policy" classname="ClusterLoaderV2" time="0.200594122"></testcase>
+      <testcase name="agentic-sandboxes: [step: 03] Phase 0 - Setup Gateway" classname="ClusterLoaderV2" time="0.592968804"></testcase>
+      <testcase name="agentic-sandboxes: [step: 04] Phase 0 - Wait for Gateway [00] - WaitForGateway" classname="ClusterLoaderV2" time="5.398503182"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [00] - KubeNetworkPoliciesPacketProcessingTime" classname="ClusterLoaderV2" time="0.06432893"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [01] - KubeNetworkPoliciesQueueDrops" classname="ClusterLoaderV2" time="0.06433442"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [02] - KubeNetworkPoliciesUserDrops" classname="ClusterLoaderV2" time="0.06445762"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [03] - KubeNetworkPoliciesPacketVerdicts" classname="ClusterLoaderV2" time="0.06432206"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [04] - KubeNetworkPoliciesCPUUsage" classname="ClusterLoaderV2" time="0.06430515"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [05] - KubeNetworkPoliciesMemoryUsage" classname="ClusterLoaderV2" time="0.06431519"></testcase>
+      <testcase name="agentic-sandboxes: [step: 06] start dns measurements [00] - DnsLookupLatency" classname="ClusterLoaderV2" time="0.064126769"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [00] - TotalSchedulingThroughput" classname="ClusterLoaderV2" time="0.765752859"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [01] - APIResponsivenessPrometheus" classname="ClusterLoaderV2" time="0.064815639"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [02] - APIResponsivenessPrometheusSimple" classname="ClusterLoaderV2" time="0.064934889"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [03] - TotalPodStartupLatency" classname="ClusterLoaderV2" time="0.267143331"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [04] - SandboxPodDensity" classname="ClusterLoaderV2" time="0.064845089"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [05] - TotalPodDensity" classname="ClusterLoaderV2" time="0.064888829"></testcase>
+      <testcase name="agentic-sandboxes: [step: 08] start Phase1SchedulingThroughput [00] - Phase1SchedulingThroughput" classname="ClusterLoaderV2" time="0.264924092"></testcase>
+      <testcase name="agentic-sandboxes: [step: 09] Phase 1 - Setup Initial Sandboxes" classname="ClusterLoaderV2" time="0.252303662"></testcase>
+      <testcase name="agentic-sandboxes: [step: 10] Phase 1 - Wait for Sandboxes [00] - WaitForPhase1Pods" classname="ClusterLoaderV2" time="356.640372893"></testcase>
+      <testcase name="agentic-sandboxes: [step: 11] gather Phase1SchedulingThroughput [00] - Phase1SchedulingThroughput" classname="ClusterLoaderV2" time="0.19488348"></testcase>
+      <testcase name="agentic-sandboxes: [step: 12] Phase 2 - Wait sandbox runtime iter 0 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.064769109"></testcase>
+      <testcase name="agentic-sandboxes: [step: 13] start ChurnSchedulingThroughput-0 [00] - ChurnSchedulingThroughput-0" classname="ClusterLoaderV2" time="0.314351857"></testcase>
+      <testcase name="agentic-sandboxes: [step: 14] Phase 2 - Recreate sandboxes iter 1 (All Objects)" classname="ClusterLoaderV2" time="0.198639417"></testcase>
+      <testcase name="agentic-sandboxes: [step: 15] Phase 2 - Wait for Churn Sandboxes iter 1 [00] - WaitForChurnPods-0" classname="ClusterLoaderV2" time="55.499833848"></testcase>
+      <testcase name="agentic-sandboxes: [step: 16] gather ChurnSchedulingThroughput-0 [00] - ChurnSchedulingThroughput-0" classname="ClusterLoaderV2" time="0.06423899"></testcase>
+      <testcase name="agentic-sandboxes: [step: 17] Phase 2 - Wait sandbox runtime iter 1 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.064429041"></testcase>
+      <testcase name="agentic-sandboxes: [step: 18] start ChurnSchedulingThroughput-1 [00] - ChurnSchedulingThroughput-1" classname="ClusterLoaderV2" time="0.314184118"></testcase>
+      <testcase name="agentic-sandboxes: [step: 19] Phase 2 - Recreate sandboxes iter 2 (All Objects)" classname="ClusterLoaderV2" time="0.206102142"></testcase>
+      <testcase name="agentic-sandboxes: [step: 20] Phase 2 - Wait for Churn Sandboxes iter 2 [00] - WaitForChurnPods-1" classname="ClusterLoaderV2" time="55.495511977"></testcase>
+      <testcase name="agentic-sandboxes: [step: 21] gather ChurnSchedulingThroughput-1 [00] - ChurnSchedulingThroughput-1" classname="ClusterLoaderV2" time="0.064218991"></testcase>
+      <testcase name="agentic-sandboxes: [step: 22] Phase 2 - Wait sandbox runtime iter 2 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.064653533"></testcase>
+      <testcase name="agentic-sandboxes: [step: 23] start ChurnSchedulingThroughput-2 [00] - ChurnSchedulingThroughput-2" classname="ClusterLoaderV2" time="0.314957068"></testcase>
+      <testcase name="agentic-sandboxes: [step: 24] Phase 2 - Recreate sandboxes iter 3 (All Objects)" classname="ClusterLoaderV2" time="0.200771997"></testcase>
+      <testcase name="agentic-sandboxes: [step: 25] Phase 2 - Wait for Churn Sandboxes iter 3 [00] - WaitForChurnPods-2" classname="ClusterLoaderV2" time="55.594829538"></testcase>
+      <testcase name="agentic-sandboxes: [step: 26] gather ChurnSchedulingThroughput-2 [00] - ChurnSchedulingThroughput-2" classname="ClusterLoaderV2" time="0.064249061"></testcase>
+      <testcase name="agentic-sandboxes: [step: 27] Phase 2 - Wait sandbox runtime iter 3 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.064310543"></testcase>
+      <testcase name="agentic-sandboxes: [step: 28] start ChurnSchedulingThroughput-3 [00] - ChurnSchedulingThroughput-3" classname="ClusterLoaderV2" time="0.314435799"></testcase>
+      <testcase name="agentic-sandboxes: [step: 29] Phase 2 - Recreate sandboxes iter 4 (All Objects)" classname="ClusterLoaderV2" time="0.203100234"></testcase>
+      <testcase name="agentic-sandboxes: [step: 30] Phase 2 - Wait for Churn Sandboxes iter 4 [00] - WaitForChurnPods-3" classname="ClusterLoaderV2" time="55.344434881"></testcase>
+      <testcase name="agentic-sandboxes: [step: 31] gather ChurnSchedulingThroughput-3 [00] - ChurnSchedulingThroughput-3" classname="ClusterLoaderV2" time="0.063929232"></testcase>
+      <testcase name="agentic-sandboxes: [step: 32] Phase 2 - Wait sandbox runtime iter 4 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.063959276"></testcase>
+      <testcase name="agentic-sandboxes: [step: 33] start ChurnSchedulingThroughput-4 [00] - ChurnSchedulingThroughput-4" classname="ClusterLoaderV2" time="0.31459955"></testcase>
+      <testcase name="agentic-sandboxes: [step: 34] Phase 2 - Recreate sandboxes iter 5 (All Objects)" classname="ClusterLoaderV2" time="0.203818755"></testcase>
+      <testcase name="agentic-sandboxes: [step: 35] Phase 2 - Wait for Churn Sandboxes iter 5 [00] - WaitForChurnPods-4" classname="ClusterLoaderV2" time="55.293923584"></testcase>
+      <testcase name="agentic-sandboxes: [step: 36] gather ChurnSchedulingThroughput-4 [00] - ChurnSchedulingThroughput-4" classname="ClusterLoaderV2" time="0.064168841"></testcase>
+      <testcase name="agentic-sandboxes: [step: 37] Phase 3 - Wait final sandbox runtime [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.064498746"></testcase>
+      <testcase name="agentic-sandboxes: [step: 38] Phase 3 - Delete final sandboxes (All Objects)" classname="ClusterLoaderV2" time="0.252749197"></testcase>
+      <testcase name="agentic-sandboxes: [step: 39] Phase 3 - Wait for final sandboxes to delete [00] - WaitForOldPodsDeleted-Final" classname="ClusterLoaderV2" time="302.462961223">
+          <failure type="Failure">:0&#xA;[measurement call WaitForRunningPods - WaitForOldPodsDeleted-Final error: got context deadline exceeded while waiting for 0 pods to be running in labelSelector(group = sandbox) - summary of pods : Pods: 8693 out of 0 created, 8693 running (8693 updated), 0 pending scheduled, 0 not scheduled, 0 inactive, 3074 terminating, 0 unknown, 0 runningButNotReady ]&#xA;:0</failure>
+      </testcase>
+      <testcase name="agentic-sandboxes: [step: 40] gather kube-network-policies measurements [00] - KubeNetworkPoliciesPacketProcessingTime" classname="ClusterLoaderV2" time="0.546381114"></testcase>
+      <testcase name="agentic-sandboxes: [step: 40] gather kube-network-policies measurements [01] - KubeNetworkPoliciesQueueDrops" classname="ClusterLoaderV2" time="0.471006382"></testcase>
+      <testcase name="agentic-sandboxes: [step: 40] gather kube-network-policies measurements [02] - KubeNetworkPoliciesUserDrops" classname="ClusterLoaderV2" time="0.471935041"></testcase>
+      <testcase name="agentic-sandboxes: [step: 40] gather kube-network-policies measurements [03] - KubeNetworkPoliciesPacketVerdicts" classname="ClusterLoaderV2" time="0.471955481"></testcase>
+      <testcase name="agentic-sandboxes: [step: 40] gather kube-network-policies measurements [04] - KubeNetworkPoliciesCPUUsage" classname="ClusterLoaderV2" time="0.544942335"></testcase>
+      <testcase name="agentic-sandboxes: [step: 40] gather kube-network-policies measurements [05] - KubeNetworkPoliciesMemoryUsage" classname="ClusterLoaderV2" time="0.543941376"></testcase>
+      <testcase name="agentic-sandboxes: [step: 41] gather dns measurements [00] - DnsLookupLatency" classname="ClusterLoaderV2" time="0.284868843"></testcase>
+      <testcase name="agentic-sandboxes: [step: 42] gather measurements [00] - TotalSchedulingThroughput" classname="ClusterLoaderV2" time="0.064384931"></testcase>
+      <testcase name="agentic-sandboxes: [step: 42] gather measurements [01] - APIResponsivenessPrometheus" classname="ClusterLoaderV2" time="0.523539642"></testcase>
+      <testcase name="agentic-sandboxes: [step: 42] gather measurements [02] - APIResponsivenessPrometheusSimple" classname="ClusterLoaderV2" time="1.106284558"></testcase>
+      <testcase name="agentic-sandboxes: [step: 42] gather measurements [03] - TotalPodStartupLatency" classname="ClusterLoaderV2" time="1.018057535"></testcase>
+      <testcase name="agentic-sandboxes: [step: 42] gather measurements [04] - SandboxPodDensity" classname="ClusterLoaderV2" time="16.978320542"></testcase>
+      <testcase name="agentic-sandboxes: [step: 42] gather measurements [05] - TotalPodDensity" classname="ClusterLoaderV2" time="17.242525541"></testcase>
+  </testsuite>

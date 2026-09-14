@@ -1,0 +1,18 @@
+steps:
+- name: "{{.action}} dns measurements"
+  measurements:
+  - Identifier: DnsLookupLatency
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: DNS Lookup Latency (NodeLocalDNS)
+      metricVersion: v1
+      unit: seconds
+      enableViolations: false
+      queries:
+      - name: p99_latency
+        query: histogram_quantile(0.99, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      - name: p90_latency
+        query: histogram_quantile(0.90, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      - name: p50_latency
+        query: histogram_quantile(0.50, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))

@@ -1,0 +1,115 @@
+# =============================================================================
+# SCENARIO B - Microsegmentation (Hub & Spoke)   [ "Option A" ]
+# =============================================================================
+# Rendered snapshot of the effective NetworkPolicy set for the 4-tier
+# microsegmentation sweep documented in benchmark_results.md Section 4.B.
+#
+# Topology: sandboxes -> gateway, and the gateway now accepts ingress ONLY
+# from `group: sandbox`. This is true microsegmentation, but it is asymmetric.
+#
+# THE ASYMMETRY (this is the whole point of the scenario):
+#   - The 2 gateway pods must expand ALL N sandbox identities into their
+#     cilium_policy maps.               -> O(N) on 1-2 nodes
+#   - The 35,000 sandbox pods still expand only the single gateway identity.
+#     -> O(1) on the other 719 nodes
+#
+# Cilium cost:  (2 x N) + (P x 3) entries cluster-wide.
+#               At N=35,000 that is ~175,000 - concentrated on the gateway nodes.
+# Kindnet cost: one nftables set per selector per node. Invariant.
+#
+# REQUIRED TUNING:
+#   cilium-config bpf-policy-map-max must be raised from the 16384 default.
+#   We use 65536. At N > 16,384 the default silently overflows the gateway's
+#   policy map and drops packets.
+#
+# MEASURED RESULT (500 QPS, 35,000 pods, 720 nodes):
+#   schedule_to_run stayed FLAT at 1.31s - 1.53s P50 across all four identity
+#   tiers, because worker nodes never paid the expansion tax. The gateway
+#   absorbed it alone.
+#
+# Namespace in live runs: sandboxes-1
+# Reproduce with: ./run-identity-sweep.sh   (CL2_SANDBOX_PEER_MODE=gateway)
+# Artifacts: artifacts_pods/*_{7,700,3500,35000}identities_*ppr_microseg_*
+# =============================================================================
+
+---
+# Baseline deny-all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-0
+  namespace: sandboxes-1
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Sandbox workload policy - UNCHANGED from Scenario A.
+# Still only ~3 peer identities per endpoint. This is why the 719 worker
+# nodes remained O(1) even at 35,000 identities.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: global-policy-0
+  namespace: sandboxes-1
+spec:
+  podSelector:
+    matchLabels:
+      group: sandbox
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Gateway policy - MICROSEGMENTED.
+# THIS IS THE ONLY DIFFERENCE FROM SCENARIO A.
+# The `from: podSelector: group: sandbox` clause forces the Cilium agents on
+# the gateway nodes to resolve and install every sandbox identity (up to
+# 35,000) into the gateway endpoints' cilium_policy eBPF maps.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-policy-0
+  namespace: sandboxes-1
+spec:
+  podSelector:
+    matchLabels:
+      group: gateway
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          group: sandbox
+    ports:
+    - protocol: TCP
+      port: 80

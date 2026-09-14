@@ -1,0 +1,163 @@
+[
+  {
+    "pod": "cilium-5rc6c",
+    "namespace": "kube-system",
+    "container": "cilium-agent",
+    "commands": [
+      {
+        "exitCode": 1,
+        "name": "cilium-pprof",
+        "command": [
+          "cilium-bugtool",
+          "--get-pprof",
+          "--pprof-trace-seconds=40",
+          "--archiveType=gz",
+          "-t=-"
+        ],
+        "timeout": "3m0s",
+        "hitTimeout": false,
+        "startTime": "2026-09-10T20:48:02.225811522Z",
+        "endTime": "2026-09-10T20:48:02.605011628Z",
+        "execError": ""
+      }
+    ]
+  },
+  {
+    "pod": "cilium-hsb58",
+    "namespace": "kube-system",
+    "container": "cilium-agent",
+    "commands": [
+      {
+        "exitCode": 1,
+        "name": "cilium-pprof",
+        "command": [
+          "cilium-bugtool",
+          "--get-pprof",
+          "--pprof-trace-seconds=40",
+          "--archiveType=gz",
+          "-t=-"
+        ],
+        "timeout": "3m0s",
+        "hitTimeout": false,
+        "startTime": "2026-09-10T20:49:02.22566444Z",
+        "endTime": "2026-09-10T20:49:02.644387594Z",
+        "execError": ""
+      }
+    ]
+  },
+  {
+    "pod": "cilium-f9nkm",
+    "namespace": "kube-system",
+    "container": "cilium-agent",
+    "commands": [
+      {
+        "exitCode": 1,
+        "name": "cilium-pprof",
+        "command": [
+          "cilium-bugtool",
+          "--get-pprof",
+          "--pprof-trace-seconds=40",
+          "--archiveType=gz",
+          "-t=-"
+        ],
+        "timeout": "3m0s",
+        "hitTimeout": false,
+        "startTime": "2026-09-10T20:50:02.22574494Z",
+        "endTime": "2026-09-10T20:50:02.618985023Z",
+        "execError": ""
+      }
+    ]
+  },
+  {
+    "pod": "cilium-bwslh",
+    "namespace": "kube-system",
+    "container": "cilium-agent",
+    "commands": [
+      {
+        "exitCode": 1,
+        "name": "cilium-pprof",
+        "command": [
+          "cilium-bugtool",
+          "--get-pprof",
+          "--pprof-trace-seconds=40",
+          "--archiveType=gz",
+          "-t=-"
+        ],
+        "timeout": "3m0s",
+        "hitTimeout": false,
+        "startTime": "2026-09-10T20:51:02.225717415Z",
+        "endTime": "2026-09-10T20:51:02.643218119Z",
+        "execError": ""
+      }
+    ]
+  },
+  {
+    "pod": "cilium-cjqth",
+    "namespace": "kube-system",
+    "container": "cilium-agent",
+    "commands": [
+      {
+        "exitCode": 1,
+        "name": "cilium-pprof",
+        "command": [
+          "cilium-bugtool",
+          "--get-pprof",
+          "--pprof-trace-seconds=40",
+          "--archiveType=gz",
+          "-t=-"
+        ],
+        "timeout": "3m0s",
+        "hitTimeout": false,
+        "startTime": "2026-09-10T20:52:02.226258275Z",
+        "endTime": "2026-09-10T20:52:02.644401777Z",
+        "execError": ""
+      }
+    ]
+  },
+  {
+    "pod": "cilium-jpgh6",
+    "namespace": "kube-system",
+    "container": "cilium-agent",
+    "commands": [
+      {
+        "exitCode": 1,
+        "name": "cilium-pprof",
+        "command": [
+          "cilium-bugtool",
+          "--get-pprof",
+          "--pprof-trace-seconds=40",
+          "--archiveType=gz",
+          "-t=-"
+        ],
+        "timeout": "3m0s",
+        "hitTimeout": false,
+        "startTime": "2026-09-10T20:53:02.225961489Z",
+        "endTime": "2026-09-10T20:53:02.64656922Z",
+        "execError": ""
+      }
+    ]
+  },
+  {
+    "pod": "cilium-gd276",
+    "namespace": "kube-system",
+    "container": "cilium-agent",
+    "commands": [
+      {
+        "exitCode": 1,
+        "name": "cilium-pprof",
+        "command": [
+          "cilium-bugtool",
+          "--get-pprof",
+          "--pprof-trace-seconds=40",
+          "--archiveType=gz",
+          "-t=-"
+        ],
+        "timeout": "3m0s",
+        "hitTimeout": false,
+        "startTime": "2026-09-10T20:54:02.225953503Z",
+        "endTime": "2026-09-10T20:54:02.621288714Z",
+        "execError": ""
+      }
+    ]
+  }
+]

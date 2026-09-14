@@ -1,0 +1,51 @@
+{{$networkPolicyType := .NetworkPolicyType}}
+{{$includeRandomCidrRules := .NetworkPolicyIncludeRandomCidrRules}}
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+spec:
+  podSelector:
+    matchLabels:
+      sandbox-id: "{{.PodBasename}}-{{.Index}}"
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  {{if $includeRandomCidrRules}}
+  - to:
+    - ipBlock:
+        cidr: {{RandIntRange 1 254}}.{{RandIntRange 0 255}}.{{RandIntRange 0 255}}.0/24
+  {{end}}
+  - to:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  ingress:
+  {{if $includeRandomCidrRules}}
+  - from:
+    - ipBlock:
+        cidr: {{RandIntRange 1 254}}.{{RandIntRange 0 255}}.{{RandIntRange 0 255}}.0/24
+  {{end}}
+  - from:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80

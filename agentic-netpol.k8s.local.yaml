@@ -1,0 +1,219 @@
+apiVersion: kops.k8s.io/v1alpha2
+kind: Cluster
+metadata:
+  name: agentic-netpol.k8s.local
+spec:
+  api:
+    loadBalancer:
+      type: Public
+  authorization:
+    rbac: {}
+  channel: stable
+  cloudConfig: {}
+  cloudProvider: gce
+  configBase: gs://kops-maspinwall-state/agentic-netpol.k8s.local
+  containerd:
+    configOverride: "\n[plugins.\"io.containerd.nri.v1.nri\"]\n  disable = false\n"
+    metrics:
+      address: 0.0.0.0:1338
+    nri:
+      enabled: true
+    runc:
+      version: 1.3.5
+    version: 2.2.4
+  etcdClusters:
+  - cpuRequest: 200m
+    etcdMembers:
+    - instanceGroup: control-plane-us-east1-b
+      name: b
+      volumeIops: 10000
+      volumeSize: 120
+      volumeThroughput: 1000
+      volumeType: hyperdisk-balanced
+    manager:
+      backupRetentionDays: 90
+      env:
+      - name: ETCD_QUOTA_BACKEND_BYTES
+        value: '8589934592'
+    memoryRequest: 100Mi
+    name: main
+  - cpuRequest: 100m
+    etcdMembers:
+    - instanceGroup: control-plane-us-east1-b
+      name: b
+      volumeIops: 10000
+      volumeSize: 120
+      volumeThroughput: 1000
+      volumeType: hyperdisk-balanced
+    manager:
+      backupRetentionDays: 90
+      env:
+      - name: ETCD_QUOTA_BACKEND_BYTES
+        value: '8589934592'
+    memoryRequest: 100Mi
+    name: events
+  iam:
+    allowContainerRegistry: true
+    legacy: false
+  kubeAPIServer:
+    eventTTL: 5m0s
+  kubeControllerManager:
+    kubeAPIBurst: 1000
+    kubeAPIQPS: '500'
+  kubeScheduler:
+    burst: 1000
+    qps: '500'
+  kubelet:
+    anonymousAuth: false
+    kubeAPIBurst: 100
+    kubeAPIQPS: 50
+    registryBurst: 100
+    registryPullQPS: 50
+  kubernetesApiAccess:
+  - 0.0.0.0/0
+  kubernetesVersion: 1.36.2
+  networking:
+    kindnet: {}
+  nonMasqueradeCIDR: 10.0.0.0/8
+  podCIDR: 10.4.0.0/14
+  project: gke-maspinwall-dev-2
+  serviceClusterIPRange: 10.1.0.0/16
+  sshAccess:
+  - 0.0.0.0/0
+  subnets:
+  - cidr: 10.0.32.0/19
+    name: us-east1
+    region: us-east1
+    type: Private
+  topology:
+    dns:
+      type: None
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata:
+  labels:
+    kops.k8s.io/cluster: agentic-netpol.k8s.local
+  name: control-plane-us-east1-b
+spec:
+  associatePublicIP: true
+  image: ubuntu-os-cloud/ubuntu-2404-noble-amd64-v20260615
+  machineType: c4-standard-96
+  maxSize: 1
+  minSize: 1
+  nodeLabels:
+    kops.k8s.io/instancegroup: control-plane-us-east1-b
+  role: Master
+  rootVolume:
+    iops: 10000
+    size: 150
+    throughput: 1000
+    type: hyperdisk-balanced
+  rootVolumeIops: 10000
+  rootVolumeSize: 150
+  rootVolumeThroughput: 1000
+  rootVolumeType: hyperdisk-balanced
+  subnets:
+  - us-east1
+  zones:
+  - us-east1-b
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata:
+  labels:
+    kops.k8s.io/cluster: agentic-netpol.k8s.local
+  name: nodes-us-east1-b
+spec:
+  image: ubuntu-os-cloud/ubuntu-2404-noble-amd64-v20260615
+  machineType: n2-standard-4
+  maxSize: 240
+  minSize: 240
+  nodeLabels:
+    kops.k8s.io/instancegroup: nodes-us-east1-b
+  role: Node
+  rootVolume:
+    size: 35
+    type: pd-ssd
+  rootVolumeSize: 35
+  rootVolumeType: pd-ssd
+  subnets:
+  - us-east1
+  zones:
+  - us-east1-b
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata:
+  labels:
+    kops.k8s.io/cluster: agentic-netpol.k8s.local
+  name: nodes-us-east1-c
+spec:
+  image: ubuntu-os-cloud/ubuntu-2404-noble-amd64-v20260615
+  machineType: n2-standard-4
+  maxSize: 240
+  minSize: 240
+  nodeLabels:
+    kops.k8s.io/instancegroup: nodes-us-east1-c
+  role: Node
+  rootVolume:
+    size: 35
+    type: pd-ssd
+  rootVolumeSize: 35
+  rootVolumeType: pd-ssd
+  subnets:
+  - us-east1
+  zones:
+  - us-east1-c
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata:
+  labels:
+    kops.k8s.io/cluster: agentic-netpol.k8s.local
+  name: nodes-us-east1-d
+spec:
+  image: ubuntu-os-cloud/ubuntu-2404-noble-amd64-v20260615
+  machineType: n2-standard-4
+  maxSize: 240
+  minSize: 240
+  nodeLabels:
+    kops.k8s.io/instancegroup: nodes-us-east1-d
+  role: Node
+  rootVolume:
+    size: 35
+    type: pd-ssd
+  rootVolumeSize: 35
+  rootVolumeType: pd-ssd
+  subnets:
+  - us-east1
+  zones:
+  - us-east1-d
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata:
+  labels:
+    kops.k8s.io/cluster: agentic-netpol.k8s.local
+  name: prometheus-nodes
+spec:
+  image: ubuntu-os-cloud/ubuntu-2404-noble-amd64-v20260615
+  machineType: c4-standard-96
+  maxSize: 1
+  minSize: 1
+  nodeLabels:
+    prometheus-pool: 'true'
+  role: Node
+  rootVolume:
+    iops: 3000
+    size: 64
+    throughput: 140
+    type: hyperdisk-balanced
+  rootVolumeIops: 3000
+  rootVolumeSize: 64
+  rootVolumeThroughput: 140
+  rootVolumeType: hyperdisk-balanced
+  subnets:
+  - us-east1
+  zones:
+  - us-east1-d

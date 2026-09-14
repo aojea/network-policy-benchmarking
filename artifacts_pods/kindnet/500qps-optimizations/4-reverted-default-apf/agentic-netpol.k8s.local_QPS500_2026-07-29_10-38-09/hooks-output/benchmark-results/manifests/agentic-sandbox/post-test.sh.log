@@ -1,0 +1,7 @@
++ RUN_ORIGINAL_SCRIPTS=false
++ PPROF_OUTPUT_ROOT=/usr/local/google/home/maspinwall/oss/benchmark-results/artifacts_pods/agentic-netpol.k8s.local_QPS500_2026-07-29_10-38-09/pprofs
++ PPROF_ARTIFACTS_PATTERN='PodPeriodicCommand-*-cilium-pprof-stdout_*.txt'
++ for file in "${ARTIFACTS_DIR}"/${PPROF_ARTIFACTS_PATTERN}
++ '[' -e '/usr/local/google/home/maspinwall/oss/benchmark-results/artifacts_pods/agentic-netpol.k8s.local_QPS500_2026-07-29_10-38-09/PodPeriodicCommand-*-cilium-pprof-stdout_*.txt' ']'
++ continue
++ [[ false == true ]]

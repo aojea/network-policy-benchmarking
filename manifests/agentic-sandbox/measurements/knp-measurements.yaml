@@ -1,0 +1,105 @@
+steps:
+- name: "{{.action}} kube-network-policies measurements"
+  measurements:
+  - Identifier: KubeNetworkPoliciesPacketProcessingTime
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Kube Network Policies Packet Processing Time
+      metricVersion: v1
+      unit: microseconds
+      enableViolations: false
+      dimensions:
+      - protocol
+      - family
+      queries:
+      - name: p99_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.99"})
+      - name: p90_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.9"})
+      - name: p50_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.5"})
+  - Identifier: KubeNetworkPoliciesQueueDrops
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Kube Network Policies Queue Drops Rate
+      metricVersion: v1
+      unit: drops_per_second
+      enableViolations: false
+      queries:
+      - name: total_drops
+        query: sum(increase(kube_network_policies_nfqueue_queue_dropped[%v]))
+      - name: mean_drop_rate
+        query: sum(rate(kube_network_policies_nfqueue_queue_dropped[%v]))
+  - Identifier: KubeNetworkPoliciesUserDrops
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Kube Network Policies User Drops Rate
+      metricVersion: v1
+      unit: drops_per_second
+      enableViolations: false
+      queries:
+      - name: total_user_drops
+        query: sum(increase(kube_network_policies_nfqueue_user_dropped[%v]))
+      - name: mean_user_drop_rate
+        query: sum(rate(kube_network_policies_nfqueue_user_dropped[%v]))
+  - Identifier: KubeNetworkPoliciesPacketVerdicts
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Kube Network Policies Packet Verdicts Rate
+      metricVersion: v1
+      unit: packets_per_second
+      enableViolations: false
+      dimensions:
+      - protocol
+      - family
+      - verdict
+      queries:
+      - name: total_packets
+        query: sum by (protocol, family, verdict) (increase(kube_network_policies_packet_counter[%v]))
+      - name: mean_rate
+        query: sum by (protocol, family, verdict) (rate(kube_network_policies_packet_counter[%v]))
+  - Identifier: KubeNetworkPoliciesCPUUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Kube Network Policies CPU Usage
+      metricVersion: v1
+      unit: cores
+      enableViolations: false
+      queries:
+      - name: max_cpu_usage
+        query: max(rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      - name: p99_cpu_usage
+        query: quantile(0.99, rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      - name: p50_cpu_usage
+        query: quantile(0.50, rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+  - Identifier: KubeNetworkPoliciesMemoryUsage
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Kube Network Policies Memory Usage
+      metricVersion: v1
+      unit: bytes
+      enableViolations: false
+      queries:
+      - name: max_memory_usage
+        query: max(process_resident_memory_bytes{job="kindnet"})
+      - name: p99_memory_usage
+        query: quantile(0.99, process_resident_memory_bytes{job="kindnet"})
+      - name: p50_memory_usage
+        query: quantile(0.50, process_resident_memory_bytes{job="kindnet"})
+  - Identifier: KubeletCNIOperationLatency
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Kubelet CNI Plugin Operations Latency
+      metricVersion: v1
+      unit: seconds
+      enableViolations: false
+      queries:
+      - name: p99_cni_add_latency
+        query: histogram_quantile(0.99, sum by (le) (rate(kubelet_cni_network_plugin_operations_duration_seconds_bucket{operation_type="add"}[%v])))

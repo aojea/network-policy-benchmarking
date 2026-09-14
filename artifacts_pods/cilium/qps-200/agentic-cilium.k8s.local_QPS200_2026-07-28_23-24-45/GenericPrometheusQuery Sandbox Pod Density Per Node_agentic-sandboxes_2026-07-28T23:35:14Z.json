@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "dataItems": [
+    {
+      "data": {
+        "max_pods_per_node": 104,
+        "mean_pods_per_node": 57.35041551246546,
+        "p50_pods_per_node": 57,
+        "p90_pods_per_node": 58,
+        "p99_pods_per_node": 60
+      },
+      "unit": "pods_per_node"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      group: gateway
+  template:
+    metadata:
+      labels:
+        group: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: registry.k8s.io/e2e-test-images/agnhost:2.53
+        command: ["/agnhost", "porter"]
+        env:
+        - name: SERVE_PORT_80
+          value: "alive"
+        ports:
+        - containerPort: 80
+          name: http
+        readinessProbe:
+          tcpSocket:
+            port: 80
+          initialDelaySeconds: 1
+          periodSeconds: 2
+        livenessProbe:
+          tcpSocket:
+            port: 80
+          initialDelaySeconds: 1
+          periodSeconds: 2

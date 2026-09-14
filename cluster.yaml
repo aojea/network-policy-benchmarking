@@ -1,0 +1,87 @@
+apiVersion: kops.k8s.io/v1alpha2
+kind: Cluster
+metadata:
+  creationTimestamp: "2026-07-27T20:37:25Z"
+  name: agentic-netpol.k8s.local
+spec:
+  api:
+    loadBalancer:
+      type: Public
+  authorization:
+    rbac: {}
+  channel: stable
+  cloudConfig: {}
+  cloudProvider: gce
+  containerd:
+    nri:
+      enabled: true
+    configOverride: |
+      [metrics]
+        address = "0.0.0.0:1338"
+        grpc_histogram = true
+      [plugins."io.containerd.nri.v1.nri"]
+        disable = false
+  configBase: gs://kops-maspinwall-state/agentic-netpol.k8s.local
+  etcdClusters:
+  - cpuRequest: 200m
+    etcdMembers:
+    - instanceGroup: control-plane-us-east1-b
+      name: b
+      volumeIops: 10000
+      volumeSize: 120
+      volumeThroughput: 1000
+      volumeType: hyperdisk-balanced
+    manager:
+      backupRetentionDays: 90
+      env:
+      - name: ETCD_QUOTA_BACKEND_BYTES
+        value: "8589934592"
+    memoryRequest: 100Mi
+    name: main
+  - cpuRequest: 100m
+    etcdMembers:
+    - instanceGroup: control-plane-us-east1-b
+      name: b
+      volumeIops: 10000
+      volumeSize: 120
+      volumeThroughput: 1000
+      volumeType: hyperdisk-balanced
+    manager:
+      backupRetentionDays: 90
+      env:
+      - name: ETCD_QUOTA_BACKEND_BYTES
+        value: "8589934592"
+    memoryRequest: 100Mi
+    name: events
+  iam:
+    allowContainerRegistry: true
+    legacy: false
+  kubeAPIServer:
+    eventTTL: 5m0s
+  kubeControllerManager:
+    kubeAPIBurst: 1000
+    kubeAPIQPS: "500"
+  kubeScheduler:
+    burst: 1000
+    qps: "500"
+  kubelet:
+    anonymousAuth: false
+  kubernetesApiAccess:
+  - 0.0.0.0/0
+  kubernetesVersion: 1.36.2
+  networking:
+    kindnet: {}
+  nonMasqueradeCIDR: 10.0.0.0/8
+  podCIDR: 10.4.0.0/14
+  project: gke-maspinwall-dev-2
+  serviceClusterIPRange: 10.1.0.0/16
+  sshAccess:
+  - 0.0.0.0/0
+  subnets:
+  - cidr: 10.0.32.0/19
+    name: us-east1
+    region: us-east1
+    type: Private
+  topology:
+    dns:
+      type: None

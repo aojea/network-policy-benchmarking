@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+spec:
+  selector:
+    matchLabels:
+      app: {{.Name}}
+  template:
+    metadata:
+      labels:
+        app: {{.Name}}
+        group: image-cacher
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: pause
+        image: {{.Image}}
+        command: ["/bin/sh", "-c", "sleep 900000"]

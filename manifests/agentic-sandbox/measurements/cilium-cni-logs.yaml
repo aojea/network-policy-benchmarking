@@ -1,0 +1,15 @@
+{{$action := .action}}
+{{$ENABLE_CILIUM_CNI_LOGS := DefaultParam .CL2_ENABLE_CILIUM_CNI_LOGS false}}
+
+{{if eq $ENABLE_CILIUM_CNI_LOGS true}}
+steps:
+- name: {{$action}} Cilium CNI Debug Logs
+  measurements:
+  - identifier: CiliumCNILogger
+    Method: CiliumCNILogger
+    Params:
+      action: {{$action}}
+      nodeSelector: "kubernetes.io/os=linux"
+      limit: 1
+      logFile: "/var/run/cilium/cilium-cni.log"
+{{end}}

@@ -1,0 +1,416 @@
+{{$MAX_SANDBOXES := DefaultParam .CL2_MAX_SANDBOXES 10}}
+{{$CHURN_ITERATIONS := DefaultParam .CL2_CHURN_ITERATIONS 1}}
+{{$QPS := DefaultParam .CL2_QPS 2}}
+{{$BURST := DefaultParam .CL2_BURST 2}}
+{{$SANDBOX_DELAY_BETWEEN_ITERATIONS := DefaultParam .CL2_SANDBOX_DELAY_BETWEEN_ITERATIONS "60s"}}
+{{$POD_CPU_REQ := DefaultParam .CL2_POD_CPU_REQ "10m"}}
+{{$POD_MEM_REQ := DefaultParam .CL2_POD_MEM_REQ "10Mi"}}
+{{$POD_CPU_LIM := DefaultParam .CL2_POD_CPU_LIM "100m"}}
+{{$POD_MEM_LIM := DefaultParam .CL2_POD_MEM_LIM "50Mi"}}
+{{$IMAGE := DefaultParam .CL2_IMAGE "registry.k8s.io/e2e-test-images/agnhost:2.53"}}
+{{$CACHE_IMAGE := DefaultParam .CL2_CACHE_IMAGE false}}
+{{$USE_HT_SCHEDULER := DefaultParam .CL2_USE_HT_SCHEDULER true}}
+{{$TEST_NUM_NODES := DefaultParam .CL2_TEST_NUM_NODES 20}}
+{{$NETWORK_POLICY_TYPE := DefaultParam .CL2_NETWORK_POLICY_TYPE "Per-Pod"}}
+{{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES := DefaultParam .CL2_NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES true}}
+{{$CNI_TYPE := DefaultParam .CL2_CNI_TYPE "none"}}
+{{$NUMBER_OF_RESOURCES_PER_SANDBOX := DefaultParam .CL2_NUMBER_OF_RESOURCES_PER_SANDBOX 2}}
+{{$WORKLOAD_TYPE := DefaultParam .CL2_WORKLOAD_TYPE "pod"}}
+{{$APPLY_DEFAULT_DENY_POLICY := DefaultParam .CL2_APPLY_DEFAULT_DENY_POLICY true}}
+# Sandbox peer topology (see manifests/policy-scenarios/README.md):
+#   "gateway" -> sandbox ingress/egress peer is `group: gateway`  (Scenario A/B, hub & spoke)
+#   "mesh"    -> sandbox ingress AND egress peer is `group: sandbox` (Scenario C, bidirectional mesh)
+{{$SANDBOX_PEER_MODE := DefaultParam .CL2_SANDBOX_PEER_MODE "gateway"}}
+
+{{$PODS_PER_WORKLOAD := 1}}
+{{if eq $WORKLOAD_TYPE "replicaset"}}
+  {{$PODS_PER_WORKLOAD = DefaultParam .CL2_PODS_PER_REPLICASET $BURST}}
+{{end}}
+
+{{$WORKLOAD_TEMPLATE := "manifests/sandbox-pod.yaml"}}
+{{$WORKLOAD_BASENAME := "sandbox-pod"}}
+
+{{if eq $WORKLOAD_TYPE "replicaset"}}
+  {{$WORKLOAD_TEMPLATE = "manifests/sandbox-replicaset.yaml"}}
+  {{$WORKLOAD_BASENAME = "sandbox-replicaset"}}
+{{end}}
+
+{{$TOTAL_WORKLOADS := DivideInt $MAX_SANDBOXES $PODS_PER_WORKLOAD}}
+{{$BURST_WORKLOADS := DivideInt $BURST $PODS_PER_WORKLOAD}}
+
+{{$USE_PER_POD_POLICY := and (eq $WORKLOAD_TYPE "pod") (eq $NETWORK_POLICY_TYPE "Per-Pod")}}
+{{$USE_GLOBAL_POLICY := or (ne $WORKLOAD_TYPE "pod") (eq $NETWORK_POLICY_TYPE "Global")}}
+
+name: agentic-sandboxes
+namespace:
+  number: 1
+  prefix: "sandboxes"
+
+tuningSets:
+- name: Uniform
+  qpsLoad:
+    # This is a QPS of client, we need to multiply it by all type of resources that creates sandboxes (pods and network policies)
+    qps: {{MultiplyInt $QPS $NUMBER_OF_RESOURCES_PER_SANDBOX}}
+
+steps:
+{{if $CACHE_IMAGE}}
+- name: Phase 0 - Cache image
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 1
+    tuningSet: Uniform
+    objectBundle:
+    - basename: image-cacher
+      objectTemplatePath: manifests/cache-daemonset.yaml
+      templateFillMap:
+        Image: {{$IMAGE}}
+
+- name: Phase 0 - Wait for cache image
+  measurements:
+  - Identifier: WaitForCacheImage
+    Method: WaitForRunningPods
+    Params:
+      action: gather
+      labelSelector: group = image-cacher
+      desiredPodCount: {{$TEST_NUM_NODES}}
+      timeout: 5m
+
+- name: Phase 0 - Teardown cache image
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 0
+    tuningSet: Uniform
+    objectBundle:
+    - basename: image-cacher
+      objectTemplatePath: manifests/cache-daemonset.yaml
+      templateFillMap:
+        Image: {{$IMAGE}}
+{{end}}
+
+- name: Phase 0 - Setup Default Deny Policy
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 1
+    tuningSet: Uniform
+    objectBundle:
+    - basename: default-deny
+      objectTemplatePath: manifests/default-deny-policy.yaml
+      templateFillMap:
+        ApplyDefaultDenyPolicy: {{$APPLY_DEFAULT_DENY_POLICY}}
+
+{{if $USE_GLOBAL_POLICY}}
+- name: Phase 0 - Setup Global allow policy
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 1
+    tuningSet: Uniform
+    objectBundle:
+    - basename: global-policy
+      objectTemplatePath: manifests/global-sandbox-policy.yaml
+      templateFillMap:
+        NetworkPolicyIncludeRandomCidrRules: {{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES}}
+        SandboxPeerMode: {{$SANDBOX_PEER_MODE}}
+{{end}}
+
+- name: Phase 0 - Setup Gateway
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 1
+    tuningSet: Uniform
+    objectBundle:
+    - basename: gateway
+      objectTemplatePath: manifests/gateway-daemon.yaml
+    - basename: gateway-service
+      objectTemplatePath: manifests/gateway-service.yaml
+    - basename: gateway-policy
+      objectTemplatePath: manifests/gateway-policy.yaml
+
+- name: Phase 0 - Wait for Gateway
+  measurements:
+  - Identifier: WaitForGateway
+    Method: WaitForRunningPods
+    Params:
+      action: gather
+      labelSelector: group = gateway
+      desiredPodCount: 2
+      timeout: 5m
+
+{{if or (eq $CNI_TYPE "none") (eq $CNI_TYPE "netpol")}}
+- module:
+    path: measurements/knp-measurements.yaml
+    params:
+      action: start
+{{end}}
+
+- module:
+    path: measurements/dns-measurements.yaml
+    params:
+      action: start
+
+- module:
+    path: measurements/measurements.yaml
+    params:
+      action: start
+
+{{if eq $CNI_TYPE "cilium"}}
+- module:
+    path: measurements/cilium-agent-pprofs.yaml
+    params:
+      action: start
+
+- module:
+    path: measurements/cilium-cni-logs.yaml
+    params:
+      action: start
+{{end}}
+
+- module:
+    path: measurements/throughput-measurements.yaml
+    params:
+      action: start
+      identifier: Phase1SchedulingThroughput
+      labelSelector: group = sandbox
+
+- name: Phase 1 - Setup Initial Sandboxes
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: {{SubtractInt $TOTAL_WORKLOADS $BURST_WORKLOADS}}
+    tuningSet: Uniform
+    objectBundle:
+    - basename: {{$WORKLOAD_BASENAME}}-initial
+      objectTemplatePath: {{$WORKLOAD_TEMPLATE}}
+      templateFillMap:
+        Iter: 0
+        Image: {{$IMAGE}}
+        CpuRequest: {{$POD_CPU_REQ}}
+        MemoryRequest: {{$POD_MEM_REQ}}
+        CpuLimit: {{$POD_CPU_LIM}}
+        MemoryLimit: {{$POD_MEM_LIM}}
+        UseHTScheduler: {{$USE_HT_SCHEDULER}}
+        Replicas: {{$PODS_PER_WORKLOAD}}
+    {{if $USE_PER_POD_POLICY}}
+    - basename: sandbox-policy-initial
+      objectTemplatePath: manifests/sandbox-policy.yaml
+      templateFillMap:
+        PodBasename: {{$WORKLOAD_BASENAME}}-initial
+        NetworkPolicyType: {{$NETWORK_POLICY_TYPE}}
+        NetworkPolicyIncludeRandomCidrRules: {{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES}}
+    {{end}}
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: {{$BURST_WORKLOADS}}
+    tuningSet: Uniform
+    objectBundle:
+    - basename: {{$WORKLOAD_BASENAME}}-0
+      objectTemplatePath: {{$WORKLOAD_TEMPLATE}}
+      templateFillMap:
+        Iter: 0
+        Image: {{$IMAGE}}
+        CpuRequest: {{$POD_CPU_REQ}}
+        MemoryRequest: {{$POD_MEM_REQ}}
+        CpuLimit: {{$POD_CPU_LIM}}
+        MemoryLimit: {{$POD_MEM_LIM}}
+        UseHTScheduler: {{$USE_HT_SCHEDULER}}
+        Replicas: {{$PODS_PER_WORKLOAD}}
+    {{if $USE_PER_POD_POLICY}}
+    - basename: sandbox-policy-0
+      objectTemplatePath: manifests/sandbox-policy.yaml
+      templateFillMap:
+        PodBasename: {{$WORKLOAD_BASENAME}}-0
+        NetworkPolicyType: {{$NETWORK_POLICY_TYPE}}
+        NetworkPolicyIncludeRandomCidrRules: {{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES}}
+    {{end}}
+
+- name: Phase 1 - Wait for Sandboxes
+  measurements:
+  - Identifier: WaitForPhase1Pods
+    Method: WaitForRunningPods
+    Params:
+      action: gather
+      labelSelector: group = sandbox
+      desiredPodCount: {{$MAX_SANDBOXES}}
+      timeout: 60m
+
+- module:
+    path: measurements/throughput-measurements.yaml
+    params:
+      action: gather
+      identifier: Phase1SchedulingThroughput
+
+# Phase 2: Churn
+
+{{range $iter := Loop $CHURN_ITERATIONS}}
+- name: Phase 2 - Wait sandbox runtime iter {{$iter}}
+  measurements:
+  - Identifier: WaitSandboxRuntime
+    Method: Sleep
+    Params:
+      duration: {{$SANDBOX_DELAY_BETWEEN_ITERATIONS}}
+
+- module:
+    path: measurements/throughput-measurements.yaml
+    params:
+      action: start
+      identifier: ChurnSchedulingThroughput-{{$iter}}
+      labelSelector: group-id = {{AddInt $iter 1}}
+
+- name: Phase 2 - Recreate sandboxes iter {{AddInt $iter 1}} (All Objects)
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: {{$BURST_WORKLOADS}}
+    tuningSet: Uniform
+    objectBundle:
+    - basename: {{$WORKLOAD_BASENAME}}-{{AddInt $iter 1}}
+      objectTemplatePath: {{$WORKLOAD_TEMPLATE}}
+      templateFillMap:
+        Iter: {{AddInt $iter 1}}
+        Image: {{$IMAGE}}
+        CpuRequest: {{$POD_CPU_REQ}}
+        MemoryRequest: {{$POD_MEM_REQ}}
+        CpuLimit: {{$POD_CPU_LIM}}
+        MemoryLimit: {{$POD_MEM_LIM}}
+        UseHTScheduler: {{$USE_HT_SCHEDULER}}
+        Replicas: {{$PODS_PER_WORKLOAD}}
+    {{if $USE_PER_POD_POLICY}}
+    - basename: sandbox-policy-{{AddInt $iter 1}}
+      objectTemplatePath: manifests/sandbox-policy.yaml
+      templateFillMap:
+        PodBasename: {{$WORKLOAD_BASENAME}}-{{AddInt $iter 1}}
+        NetworkPolicyType: {{$NETWORK_POLICY_TYPE}}
+        NetworkPolicyIncludeRandomCidrRules: {{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES}}
+    {{end}}
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 0
+    tuningSet: Uniform
+    objectBundle:
+    - basename: {{$WORKLOAD_BASENAME}}-{{$iter}}
+      objectTemplatePath: {{$WORKLOAD_TEMPLATE}}
+      templateFillMap:
+        Iter: {{$iter}}
+        Image: {{$IMAGE}}
+        CpuRequest: {{$POD_CPU_REQ}}
+        MemoryRequest: {{$POD_MEM_REQ}}
+        CpuLimit: {{$POD_CPU_LIM}}
+        MemoryLimit: {{$POD_MEM_LIM}}
+        UseHTScheduler: {{$USE_HT_SCHEDULER}}
+        Replicas: {{$PODS_PER_WORKLOAD}}
+    {{if $USE_PER_POD_POLICY}}
+    - basename: sandbox-policy-{{$iter}}
+      objectTemplatePath: manifests/sandbox-policy.yaml
+      templateFillMap:
+        PodBasename: {{$WORKLOAD_BASENAME}}-{{$iter}}
+        NetworkPolicyType: {{$NETWORK_POLICY_TYPE}}
+        NetworkPolicyIncludeRandomCidrRules: {{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES}}
+    {{end}}
+
+- name: Phase 2 - Wait for Churn Sandboxes iter {{AddInt $iter 1}}
+  measurements:
+  - Identifier: WaitForChurnPods-{{$iter}}
+    Method: WaitForRunningPods
+    Params:
+      action: gather
+      labelSelector: group-id = {{AddInt $iter 1}}
+      desiredPodCount: {{$BURST}}
+      timeout: 15m
+
+- module:
+    path: measurements/throughput-measurements.yaml
+    params:
+      action: gather
+      identifier: ChurnSchedulingThroughput-{{$iter}}
+
+{{end}}
+
+- name: Phase 3 - Wait final sandbox runtime
+  measurements:
+  - Identifier: WaitSandboxRuntime
+    Method: Sleep
+    Params:
+      duration: {{$SANDBOX_DELAY_BETWEEN_ITERATIONS}}
+
+- name: Phase 3 - Delete final sandboxes (All Objects)
+  phases:
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 0
+    tuningSet: Uniform
+    objectBundle:
+    - basename: {{$WORKLOAD_BASENAME}}-{{$CHURN_ITERATIONS}}
+      objectTemplatePath: {{$WORKLOAD_TEMPLATE}}
+      templateFillMap:
+        Iter: {{$CHURN_ITERATIONS}}
+        Image: {{$IMAGE}}
+        CpuRequest: {{$POD_CPU_REQ}}
+        MemoryRequest: {{$POD_MEM_REQ}}
+        CpuLimit: {{$POD_CPU_LIM}}
+        MemoryLimit: {{$POD_MEM_LIM}}
+        UseHTScheduler: {{$USE_HT_SCHEDULER}}
+        Replicas: {{$PODS_PER_WORKLOAD}}
+    {{if $USE_PER_POD_POLICY}}
+    - basename: sandbox-policy-{{$CHURN_ITERATIONS}}
+      objectTemplatePath: manifests/sandbox-policy.yaml
+      templateFillMap:
+        PodBasename: {{$WORKLOAD_BASENAME}}-{{$CHURN_ITERATIONS}}
+        NetworkPolicyType: {{$NETWORK_POLICY_TYPE}}
+        NetworkPolicyIncludeRandomCidrRules: {{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES}}
+    {{end}}
+  - namespaceRange: {min: 1, max: 1}
+    replicasPerNamespace: 0
+    tuningSet: Uniform  
+    objectBundle:
+    - basename: {{$WORKLOAD_BASENAME}}-initial
+      objectTemplatePath: {{$WORKLOAD_TEMPLATE}}
+      templateFillMap:
+        Iter: 0
+        Image: {{$IMAGE}}
+        CpuRequest: {{$POD_CPU_REQ}}
+        MemoryRequest: {{$POD_MEM_REQ}}
+        CpuLimit: {{$POD_CPU_LIM}}
+        MemoryLimit: {{$POD_MEM_LIM}}
+        UseHTScheduler: {{$USE_HT_SCHEDULER}}
+        Replicas: {{$PODS_PER_WORKLOAD}}
+    {{if $USE_PER_POD_POLICY}}
+    - basename: sandbox-policy-initial
+      objectTemplatePath: manifests/sandbox-policy.yaml
+      templateFillMap:
+        PodBasename: {{$WORKLOAD_BASENAME}}-initial
+        NetworkPolicyType: {{$NETWORK_POLICY_TYPE}}
+        NetworkPolicyIncludeRandomCidrRules: {{$NETWORK_POLICY_INCLUDE_RANDOM_CIDR_RULES}}
+    {{end}}
+
+- name: Phase 3 - Wait for final sandboxes to delete
+  measurements:
+  - Identifier: WaitForOldPodsDeleted-Final
+    Method: WaitForRunningPods
+    Params:
+      action: gather
+      labelSelector: group = sandbox
+      desiredPodCount: 0
+      timeout: 5m
+
+{{if or (eq $CNI_TYPE "none") (eq $CNI_TYPE "netpol")}}
+- module:
+    path: measurements/knp-measurements.yaml
+    params:
+      action: gather
+{{end}}
+
+{{if eq $CNI_TYPE "cilium"}}
+- module:
+    path: measurements/cilium-agent-pprofs.yaml
+    params:
+      action: gather
+
+- module:
+    path: measurements/cilium-cni-logs.yaml
+    params:
+      action: gather
+{{end}}
+
+- module:
+    path: measurements/dns-measurements.yaml
+    params:
+      action: gather
+
+- module:
+    path: measurements/measurements.yaml
+    params:
+      action: gather

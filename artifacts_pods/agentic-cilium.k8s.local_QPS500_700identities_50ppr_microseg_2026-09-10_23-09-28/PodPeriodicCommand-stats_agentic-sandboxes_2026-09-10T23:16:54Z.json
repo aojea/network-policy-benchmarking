@@ -1,0 +1,9 @@
+{
+  "execs": 6,
+  "execErrors": 0,
+  "timeouts": 0,
+  "nonZeroRCs": 6,
+  "measurements": 8,
+  "ticks": 6,
+  "ticksNoPods": 0
+}

@@ -1,0 +1,104 @@
+# =============================================================================
+# SCENARIO A - Baseline (Open Gateway)
+# =============================================================================
+# Rendered snapshot of the effective NetworkPolicy set for the original
+# benchmark topology, used for:
+#   - QPS latency sweep (50 / 100 / 200 / 500 QPS)
+#   - Identity cardinality sweep (7 / 700 / 3,500 / 35,000 identities)
+#
+# Topology: sandboxes -> gateway only. The gateway accepts ingress from ANY
+# source, so no policy in the cluster expands a large peer identity set.
+#
+# Cilium cost:  every endpoint holds ~3 entries in cilium_policy_<ep_id>.
+#               Total cluster entries ~ P x 3.  Invariant to identity count.
+# Kindnet cost: one nftables set per selector per node.  Invariant.
+#
+# NOTE: This is NOT true microsegmentation - any pod in the namespace can
+#       reach the gateway. See Scenario B for the tightened version.
+#
+# Namespace in live runs: sandboxes-1
+# Live template equivalents:
+#   manifests/agentic-sandbox/manifests/default-deny-policy.yaml
+#   manifests/agentic-sandbox/manifests/global-sandbox-policy.yaml
+#   manifests/agentic-sandbox/manifests/gateway-policy.yaml
+# Reproduce with: CL2_SANDBOX_PEER_MODE=gateway  (gateway-policy: no `from`)
+# =============================================================================
+
+---
+# Baseline deny-all. Every pod in the namespace is isolated until an explicit
+# allow rule selects it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-0
+  namespace: sandboxes-1
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Sandbox workload policy.
+# Egress: gateway (1 identity) + CoreDNS (1 identity).
+# Ingress: gateway (1 identity).
+# => ~3 peer identities per endpoint regardless of cluster size.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: global-policy-0
+  namespace: sandboxes-1
+spec:
+  podSelector:
+    matchLabels:
+      group: sandbox
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Gateway policy - OPEN.
+# No `from` selector: ingress is allowed from any source on TCP/80.
+# This is the key difference from Scenario B. Because there is no peer
+# selector, the gateway endpoints never expand the sandbox identity set.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-policy-0
+  namespace: sandboxes-1
+spec:
+  podSelector:
+    matchLabels:
+      group: gateway
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 80

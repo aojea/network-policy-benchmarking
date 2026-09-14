@@ -1,0 +1,1334 @@
+name: agentic-sandboxes
+dependencies: []
+automanagednamespaces: 0
+namespace:
+  number: 1
+  prefix: sandboxes
+  deletestalenamespaces: false
+  deleteautomanagednamespaces: true
+  enableexistingnamespaces: false
+  deletenamespacetimeout: 600000000000
+steps:
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: default-deny
+      objecttemplatepath: manifests/default-deny-policy.yaml
+      templatefillmap:
+        ApplyDefaultDenyPolicy: true
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 0 - Setup Default Deny Policy
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: global-policy
+      objecttemplatepath: manifests/global-sandbox-policy.yaml
+      templatefillmap:
+        NetworkPolicyIncludeRandomCidrRules: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 0 - Setup Global allow policy
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: gateway
+      objecttemplatepath: manifests/gateway-daemon.yaml
+      templatefillmap: {}
+      listunknownobjectoptions: null
+    - basename: gateway-service
+      objecttemplatepath: manifests/gateway-service.yaml
+      templatefillmap: {}
+      listunknownobjectoptions: null
+    - basename: gateway-policy
+      objecttemplatepath: manifests/gateway-policy.yaml
+      templatefillmap: {}
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 0 - Setup Gateway
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 2
+      labelSelector: group = gateway
+      timeout: 5m
+    identifier: WaitForGateway
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 0 - Wait for Gateway
+- phases: []
+  measurements:
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      dimensions:
+      - protocol
+      - family
+      enableViolations: false
+      metricName: Kube Network Policies Packet Processing Time
+      metricVersion: v1
+      queries:
+      - name: p99_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.99"})
+      - name: p90_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.9"})
+      - name: p50_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.5"})
+      unit: microseconds
+    identifier: KubeNetworkPoliciesPacketProcessingTime
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Kube Network Policies Queue Drops Rate
+      metricVersion: v1
+      queries:
+      - name: total_drops
+        query: sum(increase(kube_network_policies_nfqueue_queue_dropped[%v]))
+      - name: mean_drop_rate
+        query: sum(rate(kube_network_policies_nfqueue_queue_dropped[%v]))
+      unit: drops_per_second
+    identifier: KubeNetworkPoliciesQueueDrops
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Kube Network Policies User Drops Rate
+      metricVersion: v1
+      queries:
+      - name: total_user_drops
+        query: sum(increase(kube_network_policies_nfqueue_user_dropped[%v]))
+      - name: mean_user_drop_rate
+        query: sum(rate(kube_network_policies_nfqueue_user_dropped[%v]))
+      unit: drops_per_second
+    identifier: KubeNetworkPoliciesUserDrops
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      dimensions:
+      - protocol
+      - family
+      - verdict
+      enableViolations: false
+      metricName: Kube Network Policies Packet Verdicts Rate
+      metricVersion: v1
+      queries:
+      - name: total_packets
+        query: sum by (protocol, family, verdict) (increase(kube_network_policies_packet_counter[%v]))
+      - name: mean_rate
+        query: sum by (protocol, family, verdict) (rate(kube_network_policies_packet_counter[%v]))
+      unit: packets_per_second
+    identifier: KubeNetworkPoliciesPacketVerdicts
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Kube Network Policies CPU Usage
+      metricVersion: v1
+      queries:
+      - name: max_cpu_usage
+        query: max(rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      - name: p99_cpu_usage
+        query: quantile(0.99, rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      - name: p50_cpu_usage
+        query: quantile(0.50, rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      unit: cores
+    identifier: KubeNetworkPoliciesCPUUsage
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Kube Network Policies Memory Usage
+      metricVersion: v1
+      queries:
+      - name: max_memory_usage
+        query: max(process_resident_memory_bytes{job="kindnet"})
+      - name: p99_memory_usage
+        query: quantile(0.99, process_resident_memory_bytes{job="kindnet"})
+      - name: p50_memory_usage
+        query: quantile(0.50, process_resident_memory_bytes{job="kindnet"})
+      unit: bytes
+    identifier: KubeNetworkPoliciesMemoryUsage
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Kubelet CNI Plugin Operations Latency
+      metricVersion: v1
+      queries:
+      - name: p99_cni_add_latency
+        query: histogram_quantile(0.99, sum by (le) (rate(kubelet_cni_network_plugin_operations_duration_seconds_bucket{operation_type="add"}[%v])))
+      unit: seconds
+    identifier: KubeletCNIOperationLatency
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start kube-network-policies measurements
+- phases: []
+  measurements:
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: DNS Lookup Latency (NodeLocalDNS)
+      metricVersion: v1
+      queries:
+      - name: p99_latency
+        query: histogram_quantile(0.99, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      - name: p90_latency
+        query: histogram_quantile(0.90, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      - name: p50_latency
+        query: histogram_quantile(0.50, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      unit: seconds
+    identifier: DnsLookupLatency
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start dns measurements
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: start
+    identifier: TotalSchedulingThroughput
+    instances: []
+  - method: APIResponsivenessPrometheus
+    params:
+      action: start
+    identifier: APIResponsivenessPrometheus
+    instances: []
+  - method: APIResponsivenessPrometheus
+    params:
+      action: start
+      enableViolations: false
+      summaryName: APIResponsivenessPrometheus_simple
+      useSimpleLatencyQuery: true
+    identifier: APIResponsivenessPrometheusSimple
+    instances: []
+  - method: PodStartupLatency
+    params:
+      action: start
+      labelSelector: group = sandbox
+      summaryName: TotalPodStartupLatency
+      threshold: 5m
+    identifier: TotalPodStartupLatency
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Sandbox Pod Density Per Node
+      metricVersion: v1
+      queries:
+      - name: max_pods_per_node
+        query: max(max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: mean_pods_per_node
+        query: avg(max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: p99_pods_per_node
+        query: quantile(0.99, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: p90_pods_per_node
+        query: quantile(0.90, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: p50_pods_per_node
+        query: quantile(0.50, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      unit: pods_per_node
+    identifier: SandboxPodDensity
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Total Pod Density Per Node
+      metricVersion: v1
+      queries:
+      - name: max_pods_per_node
+        query: max(max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: mean_pods_per_node
+        query: avg(max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p99_pods_per_node
+        query: quantile(0.99, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p90_pods_per_node
+        query: quantile(0.90, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p50_pods_per_node
+        query: quantile(0.50, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      unit: pods_per_node
+    identifier: TotalPodDensity
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: start
+      enableViolations: false
+      metricName: Worker Node CPU Utilization
+      metricVersion: v1
+      queries:
+      - name: max_node_cpu_cores
+        query: max(sum by (node) (rate(container_cpu_usage_seconds_total{id="/", node=~"nodes-.*"}[%v])))
+      - name: mean_node_cpu_cores
+        query: avg(sum by (node) (rate(container_cpu_usage_seconds_total{id="/", node=~"nodes-.*"}[%v])))
+      - name: p99_node_cpu_cores
+        query: quantile(0.99, sum by (node) (rate(container_cpu_usage_seconds_total{id="/",
+          node=~"nodes-.*"}[%v])))
+      - name: p50_node_cpu_cores
+        query: quantile(0.50, sum by (node) (rate(container_cpu_usage_seconds_total{id="/",
+          node=~"nodes-.*"}[%v])))
+      unit: cores
+    identifier: NodeCPUUtilization
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start measurements
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group = sandbox
+      summaryName: Phase1SchedulingThroughput
+    identifier: Phase1SchedulingThroughput
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group = sandbox
+      statusType: Running
+      summaryName: Phase1SchedulingThroughput-CreateToRun
+    identifier: Phase1SchedulingThroughput-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start Phase1SchedulingThroughput
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 6
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-initial
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 0
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-0
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 0
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 1 - Setup Initial Sandboxes
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 35000
+      labelSelector: group = sandbox
+      timeout: 60m
+    identifier: WaitForPhase1Pods
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 1 - Wait for Sandboxes
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      summaryName: Phase1SchedulingThroughput
+    identifier: Phase1SchedulingThroughput
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      statusType: Running
+      summaryName: Phase1SchedulingThroughput-CreateToRun
+    identifier: Phase1SchedulingThroughput-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather Phase1SchedulingThroughput
+- phases: []
+  measurements:
+  - method: Sleep
+    params:
+      duration: 1s
+    identifier: WaitSandboxRuntime
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait sandbox runtime iter 0
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 1
+      summaryName: ChurnSchedulingThroughput-0
+    identifier: ChurnSchedulingThroughput-0
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 1
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-0-CreateToRun
+    identifier: ChurnSchedulingThroughput-0-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start ChurnSchedulingThroughput-0
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-1
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 1
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 0
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-0
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 0
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Recreate sandboxes iter 1 (All Objects)
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 5000
+      labelSelector: group-id = 1
+      timeout: 15m
+    identifier: WaitForChurnPods-0
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait for Churn Sandboxes iter 1
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      summaryName: ChurnSchedulingThroughput-0
+    identifier: ChurnSchedulingThroughput-0
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-0-CreateToRun
+    identifier: ChurnSchedulingThroughput-0-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather ChurnSchedulingThroughput-0
+- phases: []
+  measurements:
+  - method: Sleep
+    params:
+      duration: 1s
+    identifier: WaitSandboxRuntime
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait sandbox runtime iter 1
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 2
+      summaryName: ChurnSchedulingThroughput-1
+    identifier: ChurnSchedulingThroughput-1
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 2
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-1-CreateToRun
+    identifier: ChurnSchedulingThroughput-1-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start ChurnSchedulingThroughput-1
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-2
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 2
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 0
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-1
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 1
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Recreate sandboxes iter 2 (All Objects)
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 5000
+      labelSelector: group-id = 2
+      timeout: 15m
+    identifier: WaitForChurnPods-1
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait for Churn Sandboxes iter 2
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      summaryName: ChurnSchedulingThroughput-1
+    identifier: ChurnSchedulingThroughput-1
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-1-CreateToRun
+    identifier: ChurnSchedulingThroughput-1-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather ChurnSchedulingThroughput-1
+- phases: []
+  measurements:
+  - method: Sleep
+    params:
+      duration: 1s
+    identifier: WaitSandboxRuntime
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait sandbox runtime iter 2
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 3
+      summaryName: ChurnSchedulingThroughput-2
+    identifier: ChurnSchedulingThroughput-2
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 3
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-2-CreateToRun
+    identifier: ChurnSchedulingThroughput-2-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start ChurnSchedulingThroughput-2
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-3
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 3
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 0
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-2
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 2
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Recreate sandboxes iter 3 (All Objects)
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 5000
+      labelSelector: group-id = 3
+      timeout: 15m
+    identifier: WaitForChurnPods-2
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait for Churn Sandboxes iter 3
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      summaryName: ChurnSchedulingThroughput-2
+    identifier: ChurnSchedulingThroughput-2
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-2-CreateToRun
+    identifier: ChurnSchedulingThroughput-2-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather ChurnSchedulingThroughput-2
+- phases: []
+  measurements:
+  - method: Sleep
+    params:
+      duration: 1s
+    identifier: WaitSandboxRuntime
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait sandbox runtime iter 3
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 4
+      summaryName: ChurnSchedulingThroughput-3
+    identifier: ChurnSchedulingThroughput-3
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 4
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-3-CreateToRun
+    identifier: ChurnSchedulingThroughput-3-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start ChurnSchedulingThroughput-3
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-4
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 4
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 0
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-3
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 3
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Recreate sandboxes iter 4 (All Objects)
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 5000
+      labelSelector: group-id = 4
+      timeout: 15m
+    identifier: WaitForChurnPods-3
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait for Churn Sandboxes iter 4
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      summaryName: ChurnSchedulingThroughput-3
+    identifier: ChurnSchedulingThroughput-3
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-3-CreateToRun
+    identifier: ChurnSchedulingThroughput-3-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather ChurnSchedulingThroughput-3
+- phases: []
+  measurements:
+  - method: Sleep
+    params:
+      duration: 1s
+    identifier: WaitSandboxRuntime
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait sandbox runtime iter 4
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 5
+      summaryName: ChurnSchedulingThroughput-4
+    identifier: ChurnSchedulingThroughput-4
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: start
+      enableViolations: false
+      labelSelector: group-id = 5
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-4-CreateToRun
+    identifier: ChurnSchedulingThroughput-4-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: start ChurnSchedulingThroughput-4
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 1
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-5
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 5
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 0
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-4
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 4
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Recreate sandboxes iter 5 (All Objects)
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 5000
+      labelSelector: group-id = 5
+      timeout: 15m
+    identifier: WaitForChurnPods-4
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 2 - Wait for Churn Sandboxes iter 5
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      summaryName: ChurnSchedulingThroughput-4
+    identifier: ChurnSchedulingThroughput-4
+    instances: []
+  - method: SchedulingThroughput
+    params:
+      action: gather
+      enableViolations: false
+      labelSelector: <no value>
+      statusType: Running
+      summaryName: ChurnSchedulingThroughput-4-CreateToRun
+    identifier: ChurnSchedulingThroughput-4-CreateToRun
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather ChurnSchedulingThroughput-4
+- phases: []
+  measurements:
+  - method: Sleep
+    params:
+      duration: 1s
+    identifier: WaitSandboxRuntime
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 3 - Wait final sandbox runtime
+- phases:
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 0
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-5
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 5
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  - namespacerange:
+      min: 1
+      max: 1
+      basename: null
+    namespacelist: []
+    replicaspernamespace: 0
+    tuningset: Uniform
+    objectbundle:
+    - basename: sandbox-replicaset-initial
+      objecttemplatepath: manifests/sandbox-replicaset.yaml
+      templatefillmap:
+        CpuLimit: 100m
+        CpuRequest: 10m
+        Image: us-docker.pkg.dev/gke-scalability-images/gcr.io/agnhost:2.53
+        Iter: 0
+        MemoryLimit: 50Mi
+        MemoryRequest: 10Mi
+        Replicas: 5000
+        UseHTScheduler: false
+      listunknownobjectoptions: null
+  measurements: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 3 - Delete final sandboxes (All Objects)
+- phases: []
+  measurements:
+  - method: WaitForRunningPods
+    params:
+      action: gather
+      desiredPodCount: 0
+      labelSelector: group = sandbox
+      timeout: 5m
+    identifier: WaitForOldPodsDeleted-Final
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: Phase 3 - Wait for final sandboxes to delete
+- phases: []
+  measurements:
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      dimensions:
+      - protocol
+      - family
+      enableViolations: false
+      metricName: Kube Network Policies Packet Processing Time
+      metricVersion: v1
+      queries:
+      - name: p99_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.99"})
+      - name: p90_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.9"})
+      - name: p50_latency
+        query: max(kube_network_policies_packet_process_duration_microseconds{quantile="0.5"})
+      unit: microseconds
+    identifier: KubeNetworkPoliciesPacketProcessingTime
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Kube Network Policies Queue Drops Rate
+      metricVersion: v1
+      queries:
+      - name: total_drops
+        query: sum(increase(kube_network_policies_nfqueue_queue_dropped[%v]))
+      - name: mean_drop_rate
+        query: sum(rate(kube_network_policies_nfqueue_queue_dropped[%v]))
+      unit: drops_per_second
+    identifier: KubeNetworkPoliciesQueueDrops
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Kube Network Policies User Drops Rate
+      metricVersion: v1
+      queries:
+      - name: total_user_drops
+        query: sum(increase(kube_network_policies_nfqueue_user_dropped[%v]))
+      - name: mean_user_drop_rate
+        query: sum(rate(kube_network_policies_nfqueue_user_dropped[%v]))
+      unit: drops_per_second
+    identifier: KubeNetworkPoliciesUserDrops
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      dimensions:
+      - protocol
+      - family
+      - verdict
+      enableViolations: false
+      metricName: Kube Network Policies Packet Verdicts Rate
+      metricVersion: v1
+      queries:
+      - name: total_packets
+        query: sum by (protocol, family, verdict) (increase(kube_network_policies_packet_counter[%v]))
+      - name: mean_rate
+        query: sum by (protocol, family, verdict) (rate(kube_network_policies_packet_counter[%v]))
+      unit: packets_per_second
+    identifier: KubeNetworkPoliciesPacketVerdicts
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Kube Network Policies CPU Usage
+      metricVersion: v1
+      queries:
+      - name: max_cpu_usage
+        query: max(rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      - name: p99_cpu_usage
+        query: quantile(0.99, rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      - name: p50_cpu_usage
+        query: quantile(0.50, rate(process_cpu_seconds_total{job="kindnet"}[%v]))
+      unit: cores
+    identifier: KubeNetworkPoliciesCPUUsage
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Kube Network Policies Memory Usage
+      metricVersion: v1
+      queries:
+      - name: max_memory_usage
+        query: max(process_resident_memory_bytes{job="kindnet"})
+      - name: p99_memory_usage
+        query: quantile(0.99, process_resident_memory_bytes{job="kindnet"})
+      - name: p50_memory_usage
+        query: quantile(0.50, process_resident_memory_bytes{job="kindnet"})
+      unit: bytes
+    identifier: KubeNetworkPoliciesMemoryUsage
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Kubelet CNI Plugin Operations Latency
+      metricVersion: v1
+      queries:
+      - name: p99_cni_add_latency
+        query: histogram_quantile(0.99, sum by (le) (rate(kubelet_cni_network_plugin_operations_duration_seconds_bucket{operation_type="add"}[%v])))
+      unit: seconds
+    identifier: KubeletCNIOperationLatency
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather kube-network-policies measurements
+- phases: []
+  measurements:
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: DNS Lookup Latency (NodeLocalDNS)
+      metricVersion: v1
+      queries:
+      - name: p99_latency
+        query: histogram_quantile(0.99, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      - name: p90_latency
+        query: histogram_quantile(0.90, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      - name: p50_latency
+        query: histogram_quantile(0.50, sum by (le) (rate(node_cache_dns_request_duration_seconds_bucket[%v:1m])))
+      unit: seconds
+    identifier: DnsLookupLatency
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather dns measurements
+- phases: []
+  measurements:
+  - method: SchedulingThroughput
+    params:
+      action: gather
+    identifier: TotalSchedulingThroughput
+    instances: []
+  - method: APIResponsivenessPrometheus
+    params:
+      action: gather
+    identifier: APIResponsivenessPrometheus
+    instances: []
+  - method: APIResponsivenessPrometheus
+    params:
+      action: gather
+      enableViolations: false
+      summaryName: APIResponsivenessPrometheus_simple
+      useSimpleLatencyQuery: true
+    identifier: APIResponsivenessPrometheusSimple
+    instances: []
+  - method: PodStartupLatency
+    params:
+      action: gather
+      labelSelector: group = sandbox
+      summaryName: TotalPodStartupLatency
+      threshold: 5m
+    identifier: TotalPodStartupLatency
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Sandbox Pod Density Per Node
+      metricVersion: v1
+      queries:
+      - name: max_pods_per_node
+        query: max(max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: mean_pods_per_node
+        query: avg(max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: p99_pods_per_node
+        query: quantile(0.99, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: p90_pods_per_node
+        query: quantile(0.90, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      - name: p50_pods_per_node
+        query: quantile(0.50, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"})
+          by (node)) [%v:1s]))
+      unit: pods_per_node
+    identifier: SandboxPodDensity
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Total Pod Density Per Node
+      metricVersion: v1
+      queries:
+      - name: max_pods_per_node
+        query: max(max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: mean_pods_per_node
+        query: avg(max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p99_pods_per_node
+        query: quantile(0.99, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p90_pods_per_node
+        query: quantile(0.90, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p50_pods_per_node
+        query: quantile(0.50, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      unit: pods_per_node
+    identifier: TotalPodDensity
+    instances: []
+  - method: GenericPrometheusQuery
+    params:
+      action: gather
+      enableViolations: false
+      metricName: Worker Node CPU Utilization
+      metricVersion: v1
+      queries:
+      - name: max_node_cpu_cores
+        query: max(sum by (node) (rate(container_cpu_usage_seconds_total{id="/", node=~"nodes-.*"}[%v])))
+      - name: mean_node_cpu_cores
+        query: avg(sum by (node) (rate(container_cpu_usage_seconds_total{id="/", node=~"nodes-.*"}[%v])))
+      - name: p99_node_cpu_cores
+        query: quantile(0.99, sum by (node) (rate(container_cpu_usage_seconds_total{id="/",
+          node=~"nodes-.*"}[%v])))
+      - name: p50_node_cpu_cores
+        query: quantile(0.50, sum by (node) (rate(container_cpu_usage_seconds_total{id="/",
+          node=~"nodes-.*"}[%v])))
+      unit: cores
+    identifier: NodeCPUUtilization
+    instances: []
+  module:
+    path: ""
+    params: {}
+  name: gather measurements
+tuningsets:
+- name: Uniform
+  initialdelay: 0
+  qpsload:
+    qps: 50
+  randomizedload: null
+  steppedload: null
+  timelimitedload: null
+  randomizedtimelimitedload: null
+  parallelismlimitedload: null
+  globalqpsload: null
+  poissonload: null
+chaosmonkey:
+  nodefailure: null
+  excludednodes: {}

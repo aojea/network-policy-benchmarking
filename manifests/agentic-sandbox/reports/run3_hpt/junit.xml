@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+  <testsuite name="ClusterLoaderV2" tests="0" failures="6" errors="0" time="3453.247">
+      <testcase name="agentic-sandboxes overall (/usr/local/google/home/maspinwall/anthos/test-infra/perf-tests/testing/agentic-sandbox/config.yaml)" classname="ClusterLoaderV2" time="3453.230295403">
+          <failure type="Failure">:0&#xA;[measurement call WaitForRunningPods - WaitForOldPodsDeleted-Final error: got context deadline exceeded while waiting for 0 pods to be running in labelSelector(group = sandbox) - summary of pods : Pods: 18727 out of 0 created, 18727 running (18727 updated), 0 pending scheduled, 0 not scheduled, 0 inactive, 8259 terminating, 0 unknown, 0 runningButNotReady &#xA;measurement call PodStartupLatency - TotalPodStartupLatency error: pod startup: too high latency 99th percentile: got 6m22.99740277s expected: 5m0s&#xA;measurement call GenericPrometheusQuery - TotalPodDensity error: query error: the server is currently unable to handle the request (get services http:prometheus-k8s:9090) [body: k8s�&#xA;�&#xA;�v1��Status�g&#xA;�&#xA;�������Failure�=no endpoints available for service &#34;http:prometheus-k8s:9090&#34;&#34;�ServiceUnavailable0����&#34;�]&#xA;measurement call APIResponsivenessPrometheus - APIResponsivenessPrometheusSimple error: query error: the server is currently unable to handle the request (get services http:prometheus-k8s:9090) [body: k8s�&#xA;�&#xA;�v1��Status�g&#xA;�&#xA;�������Failure�=no endpoints available for service &#34;http:prometheus-k8s:9090&#34;&#34;�ServiceUnavailable0����&#34;�]&#xA;measurement call GenericPrometheusQuery - SandboxPodDensity error: query error: the server is currently unable to handle the request (get services http:prometheus-k8s:9090) [body: k8s�&#xA;�&#xA;�v1��Status�g&#xA;�&#xA;�������Failure�=no endpoints available for service &#34;http:prometheus-k8s:9090&#34;&#34;�ServiceUnavailable0����&#34;�]]&#xA;:0</failure>
+      </testcase>
+      <testcase name="agentic-sandboxes: [step: 01] Phase 0 - Setup Default Deny Policy" classname="ClusterLoaderV2" time="0.189229188"></testcase>
+      <testcase name="agentic-sandboxes: [step: 02] Phase 0 - Setup Global allow policy" classname="ClusterLoaderV2" time="0.159234399"></testcase>
+      <testcase name="agentic-sandboxes: [step: 03] Phase 0 - Setup Gateway" classname="ClusterLoaderV2" time="0.533549777"></testcase>
+      <testcase name="agentic-sandboxes: [step: 04] Phase 0 - Wait for Gateway [00] - WaitForGateway" classname="ClusterLoaderV2" time="5.326449317"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [00] - KubeNetworkPoliciesPacketProcessingTime" classname="ClusterLoaderV2" time="0.0414656"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [01] - KubeNetworkPoliciesQueueDrops" classname="ClusterLoaderV2" time="0.04150269"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [02] - KubeNetworkPoliciesUserDrops" classname="ClusterLoaderV2" time="0.04145476"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [03] - KubeNetworkPoliciesPacketVerdicts" classname="ClusterLoaderV2" time="0.04143134"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [04] - KubeNetworkPoliciesCPUUsage" classname="ClusterLoaderV2" time="0.0420263"></testcase>
+      <testcase name="agentic-sandboxes: [step: 05] start kube-network-policies measurements [05] - KubeNetworkPoliciesMemoryUsage" classname="ClusterLoaderV2" time="0.04162458"></testcase>
+      <testcase name="agentic-sandboxes: [step: 06] start dns measurements [00] - DnsLookupLatency" classname="ClusterLoaderV2" time="0.040966321"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [00] - TotalSchedulingThroughput" classname="ClusterLoaderV2" time="1.5925483470000001"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [01] - APIResponsivenessPrometheus" classname="ClusterLoaderV2" time="0.041296001"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [02] - APIResponsivenessPrometheusSimple" classname="ClusterLoaderV2" time="0.040769822"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [03] - TotalPodStartupLatency" classname="ClusterLoaderV2" time="0.242155821"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [04] - SandboxPodDensity" classname="ClusterLoaderV2" time="0.041365041"></testcase>
+      <testcase name="agentic-sandboxes: [step: 07] start measurements [05] - TotalPodDensity" classname="ClusterLoaderV2" time="0.040812732"></testcase>
+      <testcase name="agentic-sandboxes: [step: 08] start Phase1SchedulingThroughput [00] - Phase1SchedulingThroughput" classname="ClusterLoaderV2" time="0.191500896"></testcase>
+      <testcase name="agentic-sandboxes: [step: 09] Phase 1 - Setup Initial Sandboxes" classname="ClusterLoaderV2" time="0.225222992"></testcase>
+      <testcase name="agentic-sandboxes: [step: 10] Phase 1 - Wait for Sandboxes [00] - WaitForPhase1Pods" classname="ClusterLoaderV2" time="553.206379267"></testcase>
+      <testcase name="agentic-sandboxes: [step: 11] gather Phase1SchedulingThroughput [00] - Phase1SchedulingThroughput" classname="ClusterLoaderV2" time="0.123029686"></testcase>
+      <testcase name="agentic-sandboxes: [step: 12] Phase 2 - Wait sandbox runtime iter 0 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.040722767"></testcase>
+      <testcase name="agentic-sandboxes: [step: 13] start ChurnSchedulingThroughput-0 [00] - ChurnSchedulingThroughput-0" classname="ClusterLoaderV2" time="0.2915085"></testcase>
+      <testcase name="agentic-sandboxes: [step: 14] Phase 2 - Recreate sandboxes iter 1 (All Objects)" classname="ClusterLoaderV2" time="0.186235108"></testcase>
+      <testcase name="agentic-sandboxes: [step: 15] Phase 2 - Wait for Churn Sandboxes iter 1 [00] - WaitForChurnPods-0" classname="ClusterLoaderV2" time="125.469940318"></testcase>
+      <testcase name="agentic-sandboxes: [step: 16] gather ChurnSchedulingThroughput-0 [00] - ChurnSchedulingThroughput-0" classname="ClusterLoaderV2" time="0.125166889"></testcase>
+      <testcase name="agentic-sandboxes: [step: 17] Phase 2 - Wait sandbox runtime iter 1 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.04170507"></testcase>
+      <testcase name="agentic-sandboxes: [step: 18] start ChurnSchedulingThroughput-1 [00] - ChurnSchedulingThroughput-1" classname="ClusterLoaderV2" time="0.292585888"></testcase>
+      <testcase name="agentic-sandboxes: [step: 19] Phase 2 - Recreate sandboxes iter 2 (All Objects)" classname="ClusterLoaderV2" time="0.23610215"></testcase>
+      <testcase name="agentic-sandboxes: [step: 20] Phase 2 - Wait for Churn Sandboxes iter 2 [00] - WaitForChurnPods-1" classname="ClusterLoaderV2" time="115.453031693"></testcase>
+      <testcase name="agentic-sandboxes: [step: 21] gather ChurnSchedulingThroughput-1 [00] - ChurnSchedulingThroughput-1" classname="ClusterLoaderV2" time="0.125498841"></testcase>
+      <testcase name="agentic-sandboxes: [step: 22] Phase 2 - Wait sandbox runtime iter 2 [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.042609713"></testcase>
+      <testcase name="agentic-sandboxes: [step: 23] start ChurnSchedulingThroughput-2 [00] - ChurnSchedulingThroughput-2" classname="ClusterLoaderV2" time="0.292709356"></testcase>
+      <testcase name="agentic-sandboxes: [step: 24] Phase 2 - Recreate sandboxes iter 3 (All Objects)" classname="ClusterLoaderV2" time="0.204905921"></testcase>
+      <testcase name="agentic-sandboxes: [step: 25] Phase 2 - Wait for Churn Sandboxes iter 3 [00] - WaitForChurnPods-2" classname="ClusterLoaderV2" time="120.409855938"></testcase>
+      <testcase name="agentic-sandboxes: [step: 26] gather ChurnSchedulingThroughput-2 [00] - ChurnSchedulingThroughput-2" classname="ClusterLoaderV2" time="0.123970545"></testcase>
+      <testcase name="agentic-sandboxes: [step: 27] Phase 3 - Wait final sandbox runtime [00] - WaitSandboxRuntime" classname="ClusterLoaderV2" time="1.041359044"></testcase>
+      <testcase name="agentic-sandboxes: [step: 28] Phase 3 - Delete final sandboxes (All Objects)" classname="ClusterLoaderV2" time="0.300915474"></testcase>
+      <testcase name="agentic-sandboxes: [step: 29] Phase 3 - Wait for final sandboxes to delete [00] - WaitForOldPodsDeleted-Final" classname="ClusterLoaderV2" time="304.665170468">
+          <failure type="Failure">:0&#xA;[measurement call WaitForRunningPods - WaitForOldPodsDeleted-Final error: got context deadline exceeded while waiting for 0 pods to be running in labelSelector(group = sandbox) - summary of pods : Pods: 18727 out of 0 created, 18727 running (18727 updated), 0 pending scheduled, 0 not scheduled, 0 inactive, 8259 terminating, 0 unknown, 0 runningButNotReady ]&#xA;:0</failure>
+      </testcase>
+      <testcase name="agentic-sandboxes: [step: 30] gather kube-network-policies measurements [00] - KubeNetworkPoliciesPacketProcessingTime" classname="ClusterLoaderV2" time="510.795528937"></testcase>
+      <testcase name="agentic-sandboxes: [step: 30] gather kube-network-policies measurements [01] - KubeNetworkPoliciesQueueDrops" classname="ClusterLoaderV2" time="510.723888824"></testcase>
+      <testcase name="agentic-sandboxes: [step: 30] gather kube-network-policies measurements [02] - KubeNetworkPoliciesUserDrops" classname="ClusterLoaderV2" time="510.719793197"></testcase>
+      <testcase name="agentic-sandboxes: [step: 30] gather kube-network-policies measurements [03] - KubeNetworkPoliciesPacketVerdicts" classname="ClusterLoaderV2" time="510.785639035"></testcase>
+      <testcase name="agentic-sandboxes: [step: 30] gather kube-network-policies measurements [04] - KubeNetworkPoliciesCPUUsage" classname="ClusterLoaderV2" time="510.793205789"></testcase>
+      <testcase name="agentic-sandboxes: [step: 30] gather kube-network-policies measurements [05] - KubeNetworkPoliciesMemoryUsage" classname="ClusterLoaderV2" time="510.793660849"></testcase>
+      <testcase name="agentic-sandboxes: [step: 31] gather dns measurements [00] - DnsLookupLatency" classname="ClusterLoaderV2" time="0.339815381"></testcase>
+      <testcase name="agentic-sandboxes: [step: 32] gather measurements [00] - TotalSchedulingThroughput" classname="ClusterLoaderV2" time="0.041676247"></testcase>
+      <testcase name="agentic-sandboxes: [step: 32] gather measurements [01] - APIResponsivenessPrometheus" classname="ClusterLoaderV2" time="392.584926257"></testcase>
+      <testcase name="agentic-sandboxes: [step: 32] gather measurements [02] - APIResponsivenessPrometheusSimple" classname="ClusterLoaderV2" time="1295.274453843">
+          <failure type="Failure">:0&#xA;[measurement call APIResponsivenessPrometheus - APIResponsivenessPrometheusSimple error: query error: the server is currently unable to handle the request (get services http:prometheus-k8s:9090) [body: k8s�&#xA;�&#xA;�v1��Status�g&#xA;�&#xA;�������Failure�=no endpoints available for service &#34;http:prometheus-k8s:9090&#34;&#34;�ServiceUnavailable0����&#34;�]]&#xA;:0</failure>
+      </testcase>
+      <testcase name="agentic-sandboxes: [step: 32] gather measurements [03] - TotalPodStartupLatency" classname="ClusterLoaderV2" time="0.853093243">
+          <failure type="Failure">:0&#xA;[measurement call PodStartupLatency - TotalPodStartupLatency error: pod startup: too high latency 99th percentile: got 6m22.99740277s expected: 5m0s]&#xA;:0</failure>
+      </testcase>
+      <testcase name="agentic-sandboxes: [step: 32] gather measurements [04] - SandboxPodDensity" classname="ClusterLoaderV2" time="1687.241910566">
+          <failure type="Failure">:0&#xA;[measurement call GenericPrometheusQuery - SandboxPodDensity error: query error: the server is currently unable to handle the request (get services http:prometheus-k8s:9090) [body: k8s�&#xA;�&#xA;�v1��Status�g&#xA;�&#xA;�������Failure�=no endpoints available for service &#34;http:prometheus-k8s:9090&#34;&#34;�ServiceUnavailable0����&#34;�]]&#xA;:0</failure>
+      </testcase>
+      <testcase name="agentic-sandboxes: [step: 32] gather measurements [05] - TotalPodDensity" classname="ClusterLoaderV2" time="902.614388238">
+          <failure type="Failure">:0&#xA;[measurement call GenericPrometheusQuery - TotalPodDensity error: query error: the server is currently unable to handle the request (get services http:prometheus-k8s:9090) [body: k8s�&#xA;�&#xA;�v1��Status�g&#xA;�&#xA;�������Failure�=no endpoints available for service &#34;http:prometheus-k8s:9090&#34;&#34;�ServiceUnavailable0����&#34;�]]&#xA;:0</failure>
+      </testcase>
+  </testsuite>

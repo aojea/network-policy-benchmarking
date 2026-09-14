@@ -1,0 +1,18 @@
+steps:
+- name: "{{.action}} {{.identifier}}"
+  measurements:
+  - Identifier: {{.identifier}}
+    Method: SchedulingThroughput
+    Params:
+      action: {{.action}}
+      labelSelector: {{.labelSelector}}
+      enableViolations: false
+      summaryName: {{.identifier}}
+  - Identifier: {{.identifier}}-CreateToRun
+    Method: SchedulingThroughput
+    Params:
+      action: {{.action}}
+      labelSelector: {{.labelSelector}}
+      statusType: Running
+      enableViolations: false
+      summaryName: {{.identifier}}-CreateToRun

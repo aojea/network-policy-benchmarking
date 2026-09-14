@@ -1,0 +1,155 @@
+# =============================================================================
+# SCENARIO C - Mesh (Bidirectional Peer-to-Peer)
+# =============================================================================
+# Rendered snapshot of the effective NetworkPolicy set for the bidirectional
+# mesh sweep. Models a flat multi-tenant topology where sandboxes talk to each
+# other directly rather than through a central hub.
+#
+# Topology: sandbox <-> sandbox, in BOTH directions, plus the existing
+# gateway and DNS egress.
+#
+# THE SYMMETRY (this is the whole point of the scenario):
+#   Unlike Scenario B, there is no hub to absorb the cost. EVERY sandbox
+#   endpoint on EVERY node must expand ALL N sandbox identities, twice
+#   (once for ingress, once for egress).
+#
+# Cilium cost:  P x 2N entries cluster-wide.
+#               per endpoint  ~ 2N
+#               per node      ~ 2N x (pods per node)
+#               At N=3,500 with 50 pods/node: ~350,000 entries per node.
+#
+#               Worse, the INCREMENTAL churn is the dominant cost: each newly
+#               allocated identity must be inserted into the policy map of
+#               every co-located endpoint.
+#                   updates/sec/node = (pods per node) x (new identities/sec)
+#               At 50 pods/node and 350 new identities/sec that is ~17,500
+#               BPF map updates/sec per node, plus SelectorCache recomputation
+#               under lock on a 4 vCPU machine.
+#
+# Kindnet cost: ONE nftables hash set per node holding N pod IPs (~2 MB at
+#               N=35,000). Every pod on the node evaluates the same set, so
+#               the cost is invariant to both N and pods-per-node.
+#
+# HYPOTHESIS UNDER TEST:
+#   schedule_to_run should bend upward as N grows under Cilium, while
+#   remaining flat under Kindnet. Scenario B showed no bend (1.31-1.53s flat)
+#   precisely because worker nodes never expanded anything.
+#
+# CAUTION - DO NOT RUN AT 35,000 IDENTITIES:
+#   Bidirectional mesh needs ~2N = 70,000 entries per endpoint, which exceeds
+#   bpf-policy-map-max: 65536. That produces an uninformative map overflow
+#   rather than a measurable latency curve. Cap the sweep at 3,500 identities
+#   (10 pods/ReplicaSet):
+#       N=7      ->     14 entries/endpoint    OK
+#       N=700    ->  1,400 entries/endpoint    OK
+#       N=3,500  ->  7,000 entries/endpoint    OK
+#       N=35,000 -> 70,000 entries/endpoint    EXCEEDS LIMIT
+#
+# Namespace in live runs: sandboxes-1
+# Reproduce with: ./run-mesh-sweep.sh   (CL2_SANDBOX_PEER_MODE=mesh)
+# Artifacts: artifacts_pods/*_{7,700,3500}identities_*ppr_mesh_*
+# =============================================================================
+
+---
+# Baseline deny-all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-0
+  namespace: sandboxes-1
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Sandbox workload policy - MESH.
+# THIS IS THE SCENARIO-DEFINING CHANGE.
+#
+# Both the ingress `from` and the egress `to` now select `group: sandbox`,
+# so each endpoint's policy resolves to the full set of N sandbox identities
+# in both directions. The gateway and DNS rules are retained so the
+# wait-for-gateway init container still functions and the run stays
+# comparable to Scenarios A and B.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: global-policy-0
+  namespace: sandboxes-1
+spec:
+  podSelector:
+    matchLabels:
+      group: sandbox
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  # --- MESH: egress to all peer sandboxes (N identities) ---
+  - to:
+    - podSelector:
+        matchLabels:
+          group: sandbox
+    ports:
+    - protocol: TCP
+      port: 80
+  # --- retained from Scenario A/B: gateway reachability ---
+  - to:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+  # --- retained from Scenario A/B: DNS ---
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  ingress:
+  # --- MESH: ingress from all peer sandboxes (N identities) ---
+  - from:
+    - podSelector:
+        matchLabels:
+          group: sandbox
+    ports:
+    - protocol: TCP
+      port: 80
+  # --- retained from Scenario A/B: gateway reachability ---
+  - from:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Gateway policy - microsegmented, same as Scenario B.
+# Held constant so that any latency delta between Scenario B and Scenario C
+# is attributable solely to the sandbox mesh rules above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-policy-0
+  namespace: sandboxes-1
+spec:
+  podSelector:
+    matchLabels:
+      group: gateway
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          group: sandbox
+    ports:
+    - protocol: TCP
+      port: 80

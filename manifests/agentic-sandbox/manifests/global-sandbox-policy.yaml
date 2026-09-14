@@ -1,0 +1,87 @@
+{{$networkPolicyType := .NetworkPolicyType}}
+{{$includeRandomCidrRules := .NetworkPolicyIncludeRandomCidrRules}}
+{{$sandboxPeerMode := DefaultParam .SandboxPeerMode "gateway"}}
+{{$meshMode := eq $sandboxPeerMode "mesh"}}
+
+# Sandbox workload policy.
+#
+# Topology is controlled by CL2_SANDBOX_PEER_MODE:
+#   "gateway" (default) -> hub & spoke. Peers are the gateway (1 identity)
+#                          and CoreDNS (1 identity). Each endpoint's Cilium
+#                          policy map holds ~3 entries, invariant to cluster
+#                          size. Scenarios A and B.
+#   "mesh"              -> bidirectional peer-to-peer. Adds `group: sandbox`
+#                          to BOTH ingress and egress, so every endpoint must
+#                          expand all N sandbox identities twice. Scenario C.
+#
+# See manifests/policy-scenarios/README.md for the cost model and the
+# rendered snapshot of each scenario.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+spec:
+  podSelector:
+    matchLabels:
+      group: sandbox
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  {{if $includeRandomCidrRules}}
+  - to:
+    - ipBlock:
+        cidr: {{RandIntRange 1 254}}.{{RandIntRange 0 255}}.{{RandIntRange 0 255}}.0/24
+  {{end}}
+  {{if $meshMode}}
+  # MESH: egress to all peer sandboxes (N identities per endpoint)
+  - to:
+    - podSelector:
+        matchLabels:
+          group: sandbox
+    ports:
+    - protocol: TCP
+      port: 80
+  {{end}}
+  - to:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  ingress:
+  {{if $includeRandomCidrRules}}
+  - from:
+    - ipBlock:
+        cidr: {{RandIntRange 1 254}}.{{RandIntRange 0 255}}.{{RandIntRange 0 255}}.0/24
+  {{end}}
+  {{if $meshMode}}
+  # MESH: ingress from all peer sandboxes (N identities per endpoint)
+  - from:
+    - podSelector:
+        matchLabels:
+          group: sandbox
+    ports:
+    - protocol: TCP
+      port: 80
+  {{end}}
+  - from:
+    - podSelector:
+        matchLabels:
+          group: gateway
+    ports:
+    - protocol: TCP
+      port: 80

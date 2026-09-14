@@ -1,0 +1,84 @@
+steps:
+- name: "{{.action}} measurements"
+  measurements:
+  - Identifier: TotalSchedulingThroughput
+    Method: SchedulingThroughput
+    Params:
+      action: {{.action}}
+  - Identifier: APIResponsivenessPrometheus
+    Method: APIResponsivenessPrometheus
+    Params:
+      action: {{.action}}
+  - Identifier: APIResponsivenessPrometheusSimple
+    Method: APIResponsivenessPrometheus
+    Params:
+      action: {{.action}}
+      enableViolations: false
+      useSimpleLatencyQuery: true
+      summaryName: APIResponsivenessPrometheus_simple
+
+  - Identifier: TotalPodStartupLatency
+    Method: PodStartupLatency
+    Params:
+      action: {{.action}}
+      labelSelector: group = sandbox
+      threshold: 5m
+      summaryName: TotalPodStartupLatency
+  - Identifier: SandboxPodDensity
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Sandbox Pod Density Per Node
+      metricVersion: v1
+      unit: pods_per_node
+      enableViolations: false
+      queries:
+      - name: max_pods_per_node
+        query: max(max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"}) by (node)) [%v:1s]))
+      - name: mean_pods_per_node
+        query: avg(max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"}) by (node)) [%v:1s]))
+      - name: p99_pods_per_node
+        query: quantile(0.99, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"}) by (node)) [%v:1s]))
+      - name: p90_pods_per_node
+        query: quantile(0.90, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"}) by (node)) [%v:1s]))
+      - name: p50_pods_per_node
+        query: quantile(0.50, max_over_time((count(kube_pod_info{namespace=~"sandboxes-.*"}) by (node)) [%v:1s]))
+  - Identifier: TotalPodDensity
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Total Pod Density Per Node
+      metricVersion: v1
+      unit: pods_per_node
+      enableViolations: false
+      queries:
+      - name: max_pods_per_node
+        query: max(max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: mean_pods_per_node
+        query: avg(max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p99_pods_per_node
+        query: quantile(0.99, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p90_pods_per_node
+        query: quantile(0.90, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+      - name: p50_pods_per_node
+        query: quantile(0.50, max_over_time((count(kube_pod_info) by (node)) [%v:1s]))
+  - Identifier: NodeCPUUtilization
+    Method: GenericPrometheusQuery
+    Params:
+      action: {{.action}}
+      metricName: Worker Node CPU Utilization
+      metricVersion: v1
+      unit: cores
+      enableViolations: false
+      queries:
+      - name: max_instantaneous_node_cpu_cores
+        query: max_over_time(max(sum by (node) (rate(container_cpu_usage_seconds_total{id="/", node=~"nodes-.*"}[1m])))[%v:])
+      - name: p99_instantaneous_node_cpu_cores
+        query: max_over_time(quantile(0.99, sum by (node) (rate(container_cpu_usage_seconds_total{id="/", node=~"nodes-.*"}[1m])))[%v:])
+      - name: mean_instantaneous_node_cpu_cores
+        query: max_over_time(avg(sum by (node) (rate(container_cpu_usage_seconds_total{id="/", node=~"nodes-.*"}[1m])))[%v:])
+      - name: max_kindnetd_cpu_cores
+        query: max_over_time(max(rate(process_cpu_seconds_total{job="kindnet"}[1m]))[%v:])
+        requireSamples: false
+      - name: max_kubelet_cpu_cores
+        query: max_over_time(max(rate(process_cpu_seconds_total{job="kubelet"}[1m]))[%v:])

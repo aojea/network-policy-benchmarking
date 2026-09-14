@@ -1,0 +1,19 @@
+# Credentials & sensitive kubeconfigs
+*kubeconfig*
+*.key
+*.pem
+*.crt
+
+# Binaries
+nodeup
+*.bin
+*.exe
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# OS & Editor
+.DS_Store
+.vscode/
+.idea/
