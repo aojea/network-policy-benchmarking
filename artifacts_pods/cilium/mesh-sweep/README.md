@@ -9,8 +9,7 @@ In this topology ([`scenario-c-mesh-bidirectional.yaml`](../../../manifests/poli
 * **`tier2-700-identities-50ppr`**: 700 identities ($\sim 1,400$ BPF entries/endpoint). Completed with full metrics.
 * **`tier3-3500-identities-10ppr`**: 3,500 identities ($\sim 7,000$ BPF entries/endpoint, $\sim 350,000$ BPF entries/node). Completed with full metrics.
 
-## Omission of Tier 4 (35,000 Identities / 1 Pod per RS)
-Tier 4 was **deliberately excluded and not executed**.
+## Tier 4 (35,000 Identities / 1 Pod per RS)
 
 A bidirectional mesh at 35,000 unique identities requires:
 $$\text{BPF Entries per Endpoint} \approx 2 \times 35{,}000 = 70{,}000$$
@@ -19,4 +18,4 @@ This exceeds Cilium's maximum configurable 16-bit policy map ceiling:
 $$\texttt{bpf-policy-map-max: 65536}$$
 *(and far exceeds Cilium's default limit of $\texttt{16384}$, which overflows past 8,192 mesh identities).*
 
-Attempting to run 35,000 identities under this topology would trigger immediate eBPF map insertion failures and packet drops on every worker node rather than producing a measurable latency curve. As documented in [`run-mesh-sweep.sh`](../../../scripts/run-mesh-sweep.sh), the preflight guard actively skips any tier where $2N \ge \texttt{bpf-policy-map-max}$.
+Attempting to run 35,000 identities under this topology would trigger immediate eBPF map insertion failures and packet drops on every worker node rather than producing a measurable latency curve. As documented in [`run-mesh-sweep.sh`](../../../scripts/run-mesh-sweep.sh), the preflight guard actively skips any tier where $2N \ge \texttt{bpf-policy-map-max}$. It can be modified to run the benchmark with different parameters, but it is expected to fail.
