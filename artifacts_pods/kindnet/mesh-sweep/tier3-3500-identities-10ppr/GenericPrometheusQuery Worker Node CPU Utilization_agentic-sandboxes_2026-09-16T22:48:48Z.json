@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "dataItems": [
+    {
+      "data": {
+        "max_instantaneous_node_cpu_cores": 0.7021995494898591,
+        "max_kubelet_cpu_cores": 0.18833333333333352,
+        "mean_instantaneous_node_cpu_cores": 0.4544086139302681,
+        "p99_instantaneous_node_cpu_cores": 0.564133675953122
+      },
+      "unit": "cores"
+    }
+  ]
+}
