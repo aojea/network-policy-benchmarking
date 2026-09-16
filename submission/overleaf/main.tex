@@ -2,6 +2,7 @@
 \usepackage{usenix2019_v3}
 \usepackage{amsmath}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{graphicx}
 \usepackage{tikz}
 \usepackage{pgfplots}
@@ -40,14 +41,20 @@ nftables packet steering; runtime integration provides local Pod metadata
 without waiting for its asynchronous publication through the Kubernetes API.
 We characterize the design using source inspection and archived experiments
 targeting 35,000 Pods on a reported 720-worker testbed. Completed Cilium
-identity sweeps retain low post-scheduling latency, while a dense-mesh tier
-was excluded because its estimated per-endpoint permission state exceeded
-the stated map capacity. A separate direct-burst experiment documents 5,694
-stranded Pods. These observations motivate distinguishing latency, capacity,
-and admission failure, rather than treating identity cardinality as a single
-scaling variable. We identify the conditions under which deferred evaluation
-could reduce eager policy state, the new connection-processing costs it
-introduces, and the measurements needed to establish its comparative benefit.
+identity sweeps retain low post-scheduling latency and flat worker CPU
+(0.51--0.63 mean cores) across 7 to 35,000 intended identities, while the
+35,000-ReplicaSet tiers halve achieved Pod throughput (170 versus
+280--330 Pods/s) and a dense-mesh tier was excluded because its estimated
+per-endpoint permission state exceeded the stated map capacity. An earlier
+Cilium release stranded Pods at 700 identities, and a separate direct-burst
+experiment stranded 5,694 Pods. These observations motivate distinguishing
+latency, throughput, capacity, and admission failure, rather than treating
+identity cardinality as a single scaling variable. We identify the conditions
+under which deferred evaluation could reduce eager policy state, the new
+connection-processing and fail-open risks it introduces, and we enumerate the
+measurements absent from the artifacts---including any matched
+kube-network-policies identity sweep---that are needed to establish its
+comparative benefit.
 \end{abstract}
 
 \section{Introduction}
@@ -111,26 +118,37 @@ obtains local sandbox metadata through the runtime, removing that particular
 round trip from local address discovery. It does not eliminate namespace
 or policy convergence, nor establish a cluster-wide startup barrier.
 
-Our evidence distinguishes three observations. First, the completed
+Our evidence distinguishes four observations. First, the completed
 Cilium identity sweeps do not show an increasing post-scheduling latency
 curve: the intended 35,000-identity open-gateway configuration has a
-1.99-second P99. Second, under the benchmark's per-endpoint expansion model,
-a bidirectional mesh with 35,000 identities requires approximately 70,000
-peer-policy entries per endpoint. The experiment producer excluded that
-tier on predicted capacity grounds; it was not executed. Third, a separate
-raw-Pod burst aborted with 29,306 Pods Running and 5,694 stranded, attributed
-in the outcome record to endpoint throttling and cumulative identity
-allocation. None of these observations should be substituted for another.
+1.99-second P99, and mean worker CPU stays within 0.51--0.63 cores across
+all tiers. Second, the 35,000-ReplicaSet tiers reduce achieved Phase-1
+throughput from roughly 280--330 to 170 Pods/s and raise cluster-scoped
+Pod LIST P99 latency from 14--19 s to 28.8 s; the controller fan-out, not
+the datapath, is the visible bottleneck there. Third, under the benchmark's
+per-endpoint expansion model, a bidirectional mesh with 35,000 identities
+requires approximately 70,000 peer-policy entries per endpoint. The
+experiment producer excluded that tier on predicted capacity grounds; it was
+not executed. Fourth, two admission failures are recorded: an archived
+Cilium v1.18.6 run stranded 19 of 35,000 Pods at 700 identities, attributed
+to a policy-cache race fixed in v1.20.0~\cite{cilium7515}, and a
+v1.20.1 raw-Pod burst aborted with 29,306 Pods Running and 5,694 stranded,
+attributed to endpoint throttling and cumulative identity allocation. None
+of these observations should be substituted for another.
 
 The paper develops three contributions at different levels of evidence.
 It describes a working enforcement decomposition based on existing Linux
-mechanisms; presents a conditional model of eager permission state versus
-connection-driven work; and analyzes an archived large-cluster benchmark
-collection, including its limitations and incomplete outcomes. It does
-\emph{not} yet establish superior identity scaling in a matched \sys{}
-comparison, or quantify NFQUEUE's connection-admission overhead. Making
-those limits explicit lets the evaluation test the design rather than
-assuming its conclusion.
+mechanisms, including a security analysis of its fail-open and
+unknown-peer behavior; presents a conditional model of eager permission
+state versus connection-driven work; and analyzes an archived
+large-cluster benchmark collection, including its limitations and
+incomplete outcomes. Section~\ref{sec:gaps} enumerates what the artifacts
+do not contain. In particular, no matched \sys{} identity sweep exists:
+every archived \sys{} run uses six ReplicaSets, so the paper does
+\emph{not} establish superior identity scaling for \sys{}, and it
+quantifies NFQUEUE admission overhead only through an indicative
+three-node microbenchmark. Making those limits explicit lets the
+evaluation test the design rather than assuming its conclusion.
 
 \section{Background and Problem}
 \label{sec:background}
@@ -301,15 +319,45 @@ scheduling, scan execution, and subsequent packet handling.
 
 Failure policy must be equally explicit. NFQUEUE can drop packets on
 queue overflow or accept them when configured fail-open~\cite{nfqueueapi}.
-The inspected command-line interface defaults to fail-open. A
-security-oriented deployment cannot infer fail-closed behavior from the
-architecture alone: it must record the effective configuration and
-validate bootstrap, overload, agent loss, and upgrades. Furthermore, the
-inspected implementation logs an initial nftables synchronization error
-without blocking startup, and its fail-closed graceful-shutdown path
-removes its nftables rules. Those transitions require a deployment-level
-isolation contract or implementation changes before claiming protection
-throughout the lifecycle.
+The inspected command-line interface defaults to fail-open, and the
+dataplane sets the queue's bypass flag whenever fail-open is enabled,
+with a maximum queue length of 1,024 packets. Two facts about the cached
+path make this a security-relevant default rather than an operational
+detail. Denied packets never acquire the acceptance label, so every
+retried forbidden connection attempt re-enters the queue; and a workload
+that can emit uncached packets faster than the agent returns verdicts
+fills the queue. Under fail-open, the overflow is then \emph{accepted}
+by the kernel without evaluation. A tenant that is permitted to run code
+in the cluster can therefore attempt to convert denied traffic into a
+bypass by saturating its node's agent, and its own denied attempts are
+the cheapest saturating traffic. The inspected implementation has no
+per-source rate limit or denied-flow negative cache that would blunt this
+amplification; the only countermeasure is \texttt{--fail-open=false},
+which converts overload into loss of connectivity for every managed Pod
+on the node. Quantifying the overload point is therefore part of the
+safety argument, not only of the performance argument. The benchmark
+manifest in the repository sets \texttt{--nfqueue-id} but not
+\texttt{--fail-open}, so the archived \sys{} runs executed with the
+fail-open default.
+
+Unknown peers have a different failure mode. When the evaluator cannot
+resolve a remote source or destination address to Pod metadata, the
+inspected selector matching treats a \texttt{nil} peer as matching only
+\texttt{ipBlock} rules; Pod and namespace selectors never match it. Under
+a default-deny policy the packet is dropped. This is fail-closed at the
+policy level, and it is the correct isolation behavior, but it means a
+permitted connection from a freshly created remote Pod is denied until
+the destination node learns the source's metadata. NRI removes this
+delay only for \emph{local} Pods. For remote peers the agent still
+depends on API-server watch delivery, or on the IPTracker distribution
+tier of Section~\ref{sec:iptracker}, and the observed delay is an
+availability cost that the startup benchmarks do not measure.
+
+Further, the inspected implementation logs an initial nftables
+synchronization error without blocking startup, and its fail-closed
+graceful-shutdown path removes its nftables rules. Those transitions
+require a deployment-level isolation contract or implementation changes
+before claiming protection throughout the lifecycle.
 
 We therefore state the desired safety property conditionally. For a
 policy already handled by an agent, a new selected workload must not
@@ -374,8 +422,19 @@ requires, as a first-order condition,
 Burstiness, shared CPU, and scheduling can produce tail latency and drops
 even below this average-load condition. Queue demand includes denied
 attempts and repeated initial packets, not just successfully established
-connections. Neither $\lambda_q$ nor $\mu$ has been established by the
-startup reports analyzed here.
+connections. The only measurement of $\mu$ available to us is the
+repository's own three-node ApacheBench microbenchmark~\cite{knptesting}:
+10,000 non-keepalive HTTP requests at concurrency 1,000 completed at
+2,317 requests/s with a 5-ms median and a 3,080-ms P99 dominated by
+connect time, while the kernel logged \texttt{nf\_conntrack: table
+full} at the default 262,144-entry limit. The accompanying Prometheus
+charts show per-node queued-packet peaks near 8,000 packets/s and
+callback durations with medians of 80--120 $\mu$s and P99s of
+170--630 $\mu$s. Hardware, kernel, and agent version are not recorded,
+and conntrack exhaustion confounds the tail, so we treat these as an
+order-of-magnitude bound on a single node's verdict capacity, not as a
+characterization of $\mu$. The 720-node startup reports do not
+establish $\lambda_q$ at all.
 
 The favorable regime is thus not simply ``many identities.'' It is a
 large or rapidly changing set of possible permissions relative to the
@@ -402,9 +461,23 @@ an acceptance conntrack label with the verdict. Metrics record callback
 processing time, protocol/family-specific verdict counts, queue occupancy,
 and drop counters. Callback time does not include every component of
 kernel-to-userspace waiting time, so it cannot alone represent
-application-visible connection setup. The implementation also has
+application-visible connection setup. The benchmark harness did not
+scrape these agent metrics: its Prometheus queries cover node and
+kubelet CPU only, and a \texttt{kindnetd} CPU query in the saved
+configuration returned no samples. The implementation also has
 host-traffic and protocol exceptions; the conceptual cached path in
 Figure~\ref{fig:architecture} is not a complete description of all hooks.
+
+The repository builds several flavors of the agent. The standard flavor
+queues only traffic to or from local Pods selected by some policy,
+maintained as nftables sets of managed addresses. The IPTracker flavor
+inspected at the same revision instead reports \emph{divert-all}: it
+queues every forwarded packet not already bypassed by conntrack,
+because it watches only NetworkPolicy objects and has no Pod informer
+from which to enumerate the local Pods a policy selects. The two flavors
+therefore have different $\lambda_q$ for the same workload, and the
+queue-overload analysis of Section~\ref{sec:design} applies to a larger
+traffic fraction in the IPTracker flavor.
 
 The NRI resolver is an alternate source of local Pod metadata, not a
 replacement for every informer. Its callbacks add and remove local
@@ -419,9 +492,13 @@ An experimental distinction is essential: \sys{} names the inspected
 policy engine, while the benchmark directories label complete networking
 configurations as \emph{Kindnet} or \emph{Cilium}. Those configurations
 include networking and runtime components beyond policy evaluation.
-The benchmark image digests have not been matched to the inspected
-source revision. We therefore do not attribute their latency differences
-solely to the code described here.
+The benchmark repository pins Cilium v1.20.1 in its cluster specification
+and a \texttt{kube-network-policies:v1.1.0} image in its standalone
+install manifest, but the \sys{} cluster was created with the Kindnet
+CNI's bundled policy agent, patched to \texttt{kindnet:v1.0.1} with an
+NRI socket mount; which policy binary and flags were effective in each
+Kindnet run is not recorded in the artifacts. We therefore do not
+attribute their latency differences solely to the code described here.
 
 \section{Evaluation}
 \label{sec:evaluation}
@@ -523,27 +600,82 @@ controller fan-out and burst size also change across rows.}
 \addplot+[mark=none,thick] coordinates {(7,14) (700,1400) (3500,7000) (35000,70000)};
 \addlegendentry{Derived sandbox demand: $2I$}
 \addplot+[mark=none,dashed,black] coordinates {(5,16384) (50000,16384)};
-\addlegendentry{Guard fallback: 16,384}
+\addlegendentry{Documented default: 16,384}
 \addplot+[mark=none,dotted,black,thick] coordinates {(5,65536) (50000,65536)};
-\addlegendentry{Stated limit: 65,536}
+\addlegendentry{Flag maximum: 65,536}
 \end{axis}
 \end{tikzpicture}
 \end{minipage}
 \caption{Different meanings of scaling. Left: measured per-run startup
 quantiles, with connecting lines only as visual guides. Right: conditional
 permission-state model, not measured occupancy. The 35k mesh tier was
-excluded and has no latency point. The stated map limit requires
-version-specific verification; it is not a universal eBPF limit.}
+excluded and has no latency point. The default and maximum of
+\texttt{--bpf-policy-map-max} are from the v1.20.1 source; the setting
+effective in the benchmark is unrecorded.}
 \label{fig:scaling}
 \end{figure*}
 
 These results prevent a simple claim that identity cardinality alone
 causes Cilium startup collapse. They do not prove identity-independent
 scaling either: the generator changes controller fan-out and burst size
-with each tier. In particular, one Pod per ReplicaSet is not equivalent
-to a few large ReplicaSets at the same object-operation rate. A
-controlled identity-turnover test should hold these quantities fixed
-and independently vary label sharing and label freshness.
+with each tier. Table~\ref{tab:resources} makes the confound visible.
+Achieved Phase-1 scheduling throughput is 277--328 Pods/s (median of
+per-second samples) for every tier with 10 or more Pods per ReplicaSet,
+and 169--170 Pods/s for the two 35,000-ReplicaSet tiers; cluster-scoped
+Pod LIST P99 latency rises from 14--19 s to 28.8 s in the same tiers.
+The low post-scheduling P99 at 35,000 identities therefore coincides
+with a slower, controller-limited creation stream, which reduces the
+burst each node absorbs. One Pod per ReplicaSet is not equivalent to a
+few large ReplicaSets at the same object-operation rate. A controlled
+identity-turnover test should hold these quantities fixed and
+independently vary label sharing and label freshness.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lrrrr}
+\toprule
+Scenario & Identities & \multicolumn{1}{c}{Pods/s} & \multicolumn{2}{c}{Node CPU (cores)}\\
+ & & P50 / P90 & mean & P99\\
+\midrule
+Gateway & 7 & 284 / 377 & 0.52 & 0.71\\
+ & 700 & 317 / 364 & 0.51 & 0.69\\
+ & 3,500 & 316 / 372 & 0.54 & 0.69\\
+ & 35,000 & 170 / 182 & 0.56 & 0.81\\
+\midrule
+Spoke & 7 & 0$^{\dagger}$ / 327 & 0.51 & 0.69\\
+ & 700 & 323 / 398 & 0.61 & 0.86\\
+ & 3,500 & 321 / 373 & 0.54 & 0.67\\
+ & 35,000 & 169 / 181 & 0.55 & 0.78\\
+\midrule
+Mesh & 7 & 277 / 376 & 0.54 & 0.72\\
+ & 700 & 302 / 351 & 0.54 & 0.67\\
+ & 3,500 & 328 / 385 & 0.63 & 0.77\\
+\midrule
+Kindnet QPS 500 & $\sim$7 & 233 / 262 & 0.40 & 0.46\\
+Kindnet tuned & $\sim$7 & 190 / 225 & 0.63 & 0.79\\
+\bottomrule
+\end{tabular}
+\caption{Recovered Phase-1 scheduling throughput and worker-node CPU
+for the runs in Tables~\ref{tab:identity} and~\ref{tab:qps}. CPU is the
+harness's instantaneous node query on 4-vCPU workers, aggregated across
+nodes over the run; the Kindnet baseline row uses an earlier
+rate-based query and is not directly comparable. $^{\dagger}$More than
+half of the per-second samples were zero. No memory or policy-agent CPU
+series exist in the artifacts.}
+\label{tab:resources}
+\end{table}
+
+Worker CPU does not track intended identity count in either family:
+Cilium's mean stays within 0.51--0.63 cores and P99 within 0.67--0.86
+across tiers and scenarios, and the tuned Kindnet run is in the same
+band. This is a whole-node aggregate that includes kubelet, runtime,
+and the sandbox workload; it cannot separate the policy agent's share,
+and a per-Pod policy-map dump was not collected. What it does exclude
+is a CPU explosion at 35,000 identities on the nodes: if Cilium pays
+for identity cardinality in these configurations, it does so in the
+operator, the API server, or in map capacity, not in visible worker CPU.
 
 The mesh tiers provide additional context. Post-scheduling medians
 remain approximately 1.41--1.42 s across the three executed tiers.
@@ -553,8 +685,27 @@ durations are 192.109, 137.947, and 109.718 s. These measurements
 are consistent with substantial work outside post-scheduling startup,
 but they do not causally isolate the responsible component.
 
+Version matters as much as cardinality. An archived Cilium v1.18.6
+attempt at the 700-identity gateway tier, run three hours before the
+v1.20.1 sweep on the same day, retains only its generated configuration
+and metadata: the harness never produced a startup report. The repository's narrative
+records 34,981 Pods Running and 19 stranded in \texttt{Init:0/1} under
+default deny, and attributes the outcome to a policy-cache race between
+identity allocation and endpoint regeneration tracked as Cilium issue
+7515 and resolved in v1.20.0~\cite{cilium7515}. We have not reproduced
+that diagnosis from logs. The point for this paper is narrower: the
+same generator, at the same tier, produced an admission failure on one
+release and a clean 5.4-s P99 on the next. Identity-scaling claims
+about eager-materialization systems are release-specific, and a
+comparison must pin and report the version it tested.
+
 There is no matched Kindnet identity or mesh sweep in the inspected
-artifacts. We therefore plot no inferred constant Kindnet line. An
+artifacts. Every archived Kindnet run---the four baseline QPS tiers and
+the five tuning bundles---uses six ReplicaSets of 5,000 Pods, that is,
+roughly seven intended identities. The repository's summary table lists
+Kindnet values of 9.75, 9.80, and 9.85 s at 700, 3,500, and 35,000
+identities, but no artifact directory backs those cells; they are not
+used here. We therefore plot no inferred constant Kindnet line, and an
 isolated tuned Kindnet run cannot establish invariance to identities,
 topology, or churn.
 
@@ -571,9 +722,19 @@ This is meaningful design evidence: a system can have low latency
 throughout its feasible region and still encounter a state-capacity
 boundary. It is not evidence that an executed 35,000-identity mesh
 experienced insertion failures, packet loss, or a particular latency.
-We label it an \emph{analytical exclusion}. The exact per-identity
-representation and configurable maximum must be verified for the tested
-Cilium binary. An alternative representation could move this boundary.
+We label it an \emph{analytical exclusion}. The runner's 65,536 figure
+is the maximum the agent accepts for \texttt{--bpf-policy-map-max}; the
+documented default is 16,384 entries per endpoint, which the runner
+uses as a fallback~\cite{ciliumagentref}. At the default, the same
+model excludes the 35,000-identity tier even for the unidirectional
+scenarios ($I=35{,}000>16{,}384$), yet those tiers completed with
+35,000 Pods Running. Either the tested configuration raised the limit,
+or the deployed policies did not expand per identity as the model
+assumes; the artifacts contain no \texttt{cilium-dbg bpf policy get}
+dump or ConfigMap to decide. The agent also exposes an
+endpoint-lockdown-on-overflow option~\cite{ciliumagentref}, so an
+executed overflow would surface as denied traffic rather than as a
+startup latency, which is one more reason the unrun tier has no P99.
 
 Under the benchmark model, 3,500 selected identities and 50 local
 endpoints imply approximately 350,000 sandbox policy entries per node.
@@ -617,14 +778,27 @@ failure. A configured mesh permission does not create all-to-all
 traffic, and reaching \texttt{Running} does not test every forbidden
 peer relationship.
 
+The only connection-level data point is the repository microbenchmark
+summarized in Section~\ref{sec:model}: 2,317 new connections/s through
+the queue on one node with sub-millisecond callback medians, and a P99
+above 3 s once conntrack was exhausted~\cite{knptesting}. Read against
+the startup sweeps, it says that a node absorbing 50 sandboxes at
+170--330 Pods/s cluster-wide is nowhere near the queue's connection
+limit, and that the limit is reached first by connection-tracking
+capacity rather than by the userspace evaluator. It does not say what
+happens under sustained denied traffic, whether the P99 is queueing or
+conntrack, or how the numbers change with policy count.
+
 The minimum discriminating extension is a small, controlled comparison
 of fresh and reused TCP/UDP flows at increasing offered rates, with
 permitted and denied traffic kept separate. It should report achieved
 connection rate, application-visible P50/P99 setup latency, queued
 packets per successful connection, agent CPU, queue drops, and conntrack
 occupancy. Repeated trials should include overload, rather than stop
-before the queue becomes the bottleneck. This can test the displaced
-cost without repeating a full 720-node sweep.
+before the queue becomes the bottleneck, and should run once with
+fail-open and once fail-closed to measure the bypass window of
+Section~\ref{sec:design}. This can test the displaced cost without
+repeating a full 720-node sweep.
 
 A companion lifecycle test should establish policy before Pod creation,
 then observe runtime metadata delivery and both allowed and forbidden
@@ -640,9 +814,13 @@ Table~\ref{tab:qps} reports primary saved Cilium and Kindnet baseline
 runs. At QPS 500, their post-scheduling P99s are 5.482 s and 57.068 s,
 respectively. The archived baseline therefore does not establish a
 general startup advantage for the NFQUEUE-based configuration. At
-QPS 50 and 100, both families have JUnit failures despite producing
-startup reports; these rows must not be described as wholly successful
-experiments.
+QPS 50 and 100, both families record two JUnit failures. All four are
+the same measurement, \texttt{WaitForOldPodsDeleted-Final}, timing out
+while 5,024 to 19,999 sandbox Pods from the churn phase were still
+terminating; no startup-phase measurement failed. The startup
+percentiles in those rows are therefore complete, but the runs did not
+finish their teardown within the harness deadline, and Pod deletion
+latency at these tiers is itself unmeasured.
 
 \begin{table}[t]
 \centering
@@ -659,8 +837,10 @@ $100^{*}$ & 1.788 & 7.143 & 1.814 & 7.378\\
 \bottomrule
 \end{tabular}
 \caption{Archived primary QPS runs; all values are seconds. Asterisks mark
-tiers with JUnit failures in both configurations. These are complete-stack
-observations, not an isolated NFQUEUE versus eBPF comparison.}
+tiers whose only JUnit failures are final-teardown deletion timeouts in
+both configurations; startup measurements completed. These are
+complete-stack observations, not an isolated NFQUEUE versus eBPF
+comparison.}
 \label{tab:qps}
 \end{table}
 
@@ -683,17 +863,57 @@ including authorization, admission, persistence, and watch delivery.
 Its central role makes API latency relevant to network-policy evaluation,
 without implying that application packets pass through it.
 
-The collection's limitations affect the conclusions directly. Exact
-image provenance and effective settings remain incomplete. Most
+The collection's limitations affect the conclusions directly. Most
 configurations have too few independent trials for statistical claims.
 Summary percentiles hide time variation and exclude reconstruction of
-individual Pod trajectories. Some attempts lack final reports, and
-the counts of failed JUnit elements are not counts of failed Pods.
-CPU maxima based on one-minute rates are not instantaneous peaks.
-Finally, no matched Kindnet high-identity sweep or connection-rate
-evaluation is present. We use these artifacts to locate the questions
-the architecture must answer, not to manufacture a comparative scaling
-curve from missing measurements.
+individual Pod trajectories. The counts of failed JUnit elements are
+not counts of failed Pods. CPU maxima based on instantaneous samples
+at the harness's scrape interval are not true peaks. We use these
+artifacts to locate the questions the architecture must answer, not
+to manufacture a comparative scaling curve from missing measurements.
+
+\subsection{What the Artifacts Do Not Contain}
+\label{sec:gaps}
+A scan of both repositories for the measurements a reviewer would ask
+for produced the inventory in Table~\ref{tab:gaps}. Each row names the
+missing evidence, the claim it would support or refute, and the cheapest
+experiment that would produce it. The first row is the most important:
+without a \sys{} run at 700 or more intended identities, the paper's
+central hypothesis---that deferred evaluation removes the identity
+dimension from the enforcement cost---is untested, and the flat
+Kindnet values in the repository's summary table must be treated as
+unsupported until an artifact directory backs them.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\newcolumntype{R}[1]{>{\raggedright\arraybackslash}p{#1}}
+\begin{tabular}{R{2.35cm}R{2.15cm}R{2.85cm}}
+\toprule
+Missing evidence & Claim at stake & Cheapest producer\\
+\midrule
+\sys{} at $\geq$700 identities (all runs use 6 RS) & identity-independent admission & rerun the three September generators on the Kindnet cluster\\
+\addlinespace
+Policy-agent CPU and memory (only node CPU exists; \texttt{kindnetd} query had no samples) & where the displaced work lands & scrape agent metrics; fix the query's container label\\
+\addlinespace
+Queued-packet rate and verdict latency at 720 nodes ($\lambda_q$, $\mu$) & queue-overload and fail-open window & enable agent \texttt{/metrics} scraping in the harness\\
+\addlinespace
+Policy-map occupancy dumps and the effective map-size flag & capacity model of Fig.~\ref{fig:scaling} & \texttt{cilium-dbg bpf policy get} on one node per tier\\
+\addlinespace
+Denied-traffic and first-connection tests & isolation and availability delay & single-node connection microbenchmark with deny mix\\
+\addlinespace
+NRI on/off with identical binaries & startup-metadata benefit & rerun baseline QPS 500 and tuning bundle 1 with one pinned image\\
+\addlinespace
+Effective binary and flags per Kindnet run & attribution to inspected code & record image digests and args in \texttt{cl2-metadata}\\
+\addlinespace
+Raw logs for the v1.18.6 and raw-Pod aborts & causal diagnosis of both failures & retain agent and operator logs on abort\\
+\bottomrule
+\end{tabular}
+\caption{Evidence absent from the benchmark and implementation
+repositories, found by scanning both at the cited revisions.}
+\label{tab:gaps}
+\end{table}
 
 \section{Related Work}
 The closest precedent is reactive virtual switching, not another use
@@ -732,8 +952,26 @@ datastore~\cite{calicotypha}. The IPTracker direction discussed next
 must therefore be evaluated on its representation, caching, and
 recovery tradeoffs, not on the novelty of inserting a distribution tier.
 
+The eager-materialization model of Section~\ref{sec:model} is one
+representation, not the only kernel-resident one. Open vSwitch's
+conjunctive match (\texttt{conj\_id}) lets a rule with $n$ source and
+$m$ destination members be installed as $n+m$ flows rather than
+$n\times m$~\cite{ovsfields}, and Antrea's OVS pipeline uses exactly
+this to compile Kubernetes NetworkPolicy, marking established
+connections in conntrack so that only new flows traverse the policy
+tables~\cite{antreapipeline}. Calico's Felix compiles selectors into
+ipsets referenced by a bounded number of iptables or nftables rules, so
+per-endpoint state grows with the number of \emph{rules} rather than
+peers~\cite{calicoarch}. Both approaches keep semantic evaluation in
+the kernel and avoid the per-peer cross-product by factoring the match;
+\sys{} avoids it by moving the match to userspace and caching the
+result. A fair capacity comparison must therefore include a
+factored-kernel baseline, not only the per-identity expansion that
+motivated the mesh-tier exclusion.
+
 \section{Discussion and Future Work}
 \subsection{Compact Metadata Distribution with IPTracker}
+\label{sec:iptracker}
 Avoiding a distributed security-identity allocator does not eliminate
 distributed metadata. With $N$ agents each watching all Pod updates,
 an update stream of rate $U$ entails approximately $NU$ deliveries
@@ -775,9 +1013,25 @@ failure, and IP reuse must be evaluated before persisted state is
 treated as current authorization metadata. Issue 114659 provides
 additional motivation for reducing informer memory costs, but it is
 not a quantitative demonstration of this implementation's
-benefit~\cite{k8s114659}. IPTracker is implemented future work in
-this paper's evaluation scope, not a feature credited with the
-reported startup results.
+benefit~\cite{k8s114659}.
+
+The only quantitative data on IPTracker are the single-client
+integration-test logs posted with the repository's scalability test
+(PR 218)~\cite{iptracker218}. With 10,000 records the server reported
+35 MB of Go heap, 643 ms average propagation delay, and a 1 MB client
+store. A 40,000-record run at 30,000 writes/s reached 6.6 s propagation
+and 174 MB, and the etcd maintainer participating in the thread
+observed watch propagation stalling above that size. A 10-million
+record run throttled to 1,024 writes/s completed in 9,828 s with 43 ms
+average propagation, 24.7 GiB of server heap, and a 1.25 GiB client
+store. These are one process on one machine with no packet path, and
+the LRU in that test was sized to hold every record, so they bound
+neither agent memory under eviction nor the fan-out to hundreds of
+clients. They do show that the distribution tier, not the client,
+holds the bulk of the state, and that write rate rather than record
+count governs propagation delay in the tested range. IPTracker is
+implemented future work in this paper's evaluation scope, not a
+feature credited with the reported startup results.
 
 \subsection{Testing the Architectural Hypothesis}
 The most informative next result is not necessarily a larger cluster.
@@ -827,14 +1081,16 @@ to eliminate all distributed-state dependencies.
 
 The archived experiments show why this decomposition is worth
 evaluating carefully. Completed Cilium sweeps retain low
-post-scheduling latency; the producer excludes a dense-mesh tier
-on predicted permission-state capacity grounds; and a separate
-direct burst documents an admission failure. Together they motivate
-a comparison based on feasible state and attempted communication,
-not a universal ranking of datapath technologies. Establishing the
-benefit of deferred policy evaluation now requires a matched
-identity-turnover comparison and explicit measurements of connection
-cost and lifecycle safety.
+post-scheduling latency and flat worker CPU while the 35,000-ReplicaSet
+tiers halve achieved throughput; the producer excludes a dense-mesh
+tier on predicted permission-state capacity grounds; and two
+admission failures---one release-specific, one allocator- and
+limiter-specific---are recorded. Together they motivate a comparison
+based on feasible state and attempted communication, not a universal
+ranking of datapath technologies. Establishing the benefit of deferred
+policy evaluation now requires the eight measurements of
+Table~\ref{tab:gaps}, starting with a matched \sys{} identity sweep
+and an explicit test of the fail-open overload window.
 
 \clearpage
 \bibliographystyle{plain}
@@ -874,6 +1130,29 @@ Table~\ref{tab:qps} uses the primary runs under
 The separate Cilium trial is in \path{qps-500/repeat-run}.
 The final Kindnet tuning bundle is under
 \path{artifacts_pods/kindnet/500qps-optimizations/5-v1.0.1-plus-nri-plus-apf-exempt/}.
+The teardown-timeout diagnosis of the asterisked rows is from the
+\path{junit.xml} files in the QPS 50 and 100 directories of both
+families.
+
+\paragraph{Recovered throughput, CPU, and API latency.}
+Table~\ref{tab:resources} reads \path{Phase1SchedulingThroughput_*.json}
+(\texttt{perc50}, \texttt{perc90}) and
+\path{GenericPrometheusQuery Worker Node CPU Utilization_*.json}
+(\texttt{mean\_}, \texttt{p99\_instantaneous\_node\_cpu\_cores}) in
+each run directory; the Kindnet baseline uses \texttt{mean\_node} and
+\texttt{p99\_node} from an earlier query. Pod LIST latency is the
+cluster-scoped \texttt{pods/LIST} row of
+\path{APIResponsivenessPrometheus_simple_*.json}. The hub-and-spoke
+rows come from \path{artifacts_pods/cilium/microsegmentation/tier*}.
+The extraction is reproducible with a short script over these files;
+no value was transcribed from the repository's Markdown summary.
+
+\paragraph{Archived v1.18.6 attempt.}
+\path{artifacts_pods/archive/v1.18.6-identity-runs/} holds a complete
+7-identity run and a 700-identity directory containing only
+\path{cl2-metadata.json} and the generated configuration. The
+34,981/19 counts and the issue-7515 attribution are from
+\path{benchmark_results.md}, not from artifacts.
 
 \paragraph{Outcome records and capacity model.}
 Revision \texttt{0442dce} adds
@@ -899,11 +1178,17 @@ and the explicitly conditional capacity model.
 
 \paragraph{Implementation.}
 Paths in the companion kube-network-policies repository are
-\path{pkg/dataplane/controller.go}, \path{pkg/cmd/cmd.go},
-\path{pkg/podinfo/nri/resolver.go}, and
-\path{pkg/ipcache/{client,bbolt,lru}.go}, inspected at
-\texttt{9984dcd}. Source behavior has not been equated to the
-benchmark binaries. \path{submission/evidence-audit.md} records
+\path{pkg/dataplane/controller.go} (queue configuration, bypass flag,
+postrouting and input chains), \path{pkg/cmd/cmd.go}
+(\texttt{--fail-open} default), \path{pkg/networkpolicy/networkpolicy.go}
+(\texttt{nil}-peer selector semantics, managed-IP set),
+\path{plugins/iptracker/iptracker_networkpolicy.go} (divert-all),
+\path{pkg/podinfo/nri/resolver.go}, \path{pkg/ipcache/{client,bbolt,lru}.go},
+and \path{docs/testing/README.md} with its two PNG charts, inspected at
+\texttt{9984dcd}. Benchmark-side deployment facts are from
+\path{manifests/kube-network-policies-install.yaml} and
+\path{scripts/create-netpol.sh}. Source behavior has not been equated
+to the benchmark binaries. \path{submission/evidence-audit.md} records
 the claim-level limitations, and \path{submission/author-guide.md}
 provides the prioritized remaining checks.
 \end{document}

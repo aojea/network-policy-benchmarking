@@ -171,12 +171,14 @@ preparation package.
 
 | Priority and budget | Work | Deliverable or stopping rule |
 | --- | --- | --- |
-| P0, first 1-2 hours | Verify the mesh capacity model against the tested Cilium version; recover raw-Pod failure diagnostics and Kindnet comparison runs | Separate completed tiers, tier 4 not executed (`f998224`), and raw-Pod abort (`0442dce`); pin limits, images, and each plotted value |
-| P0, 1-2 hours | Write the precise contribution and reconcile registered abstract with measured scope | Author-written introduction outline that distinguishes OVS/ONCache and states the new cost |
+| P0, done September 17 | Scan both repositories for reviewer-requested data | Recovered Phase-1 throughput, node CPU, Pod LIST latency, JUnit teardown diagnosis, KNP microbenchmark, PR 218 IPTracker logs, Cilium v1.20.1 map limits; confirmed absences listed in `evidence-audit.md` "Gap Scan" and paper Table 4 |
+| P0, first 1-2 hours | Verify the mesh capacity model against the tested Cilium version; recover raw-Pod failure diagnostics and Kindnet comparison runs | Separate completed tiers, tier 4 not executed (`f998224`), and raw-Pod abort (`0442dce`); pin limits, images, and each plotted value. Open item: the effective `bpf-policy-map-max` is unrecorded, and at the 16,384 default the model contradicts the completed unidirectional 35,000 tiers |
+| P0, 1-2 hours | Write the precise contribution and reconcile registered abstract with measured scope | Author-written introduction outline that distinguishes OVS/ONCache, conjunctive-match (Antrea) and ipset (Calico) factoring, and states the new cost |
+| P0, 2-4 hours if the Kindnet cluster is still up | **Rerun the three September generators (700/3,500/35,000 identities) on the Kindnet cluster** | This is the single missing artifact behind the paper's central claim; every archived KNP run uses 6 ReplicaSets. Record image digest and flags in `cl2-metadata.json` |
 | P1, 2-4 hours on an existing small testbed | Replay issue 85966's startup dependency with already-applied deny/allow policies, NRI on/off | Runtime/IP observation and first successful allowed connection timestamps; zero forbidden connectivity; do not use public targets |
-| P1, 2-4 hours on an existing small testbed | Fresh TCP/UDP flows versus reused flows, plus denied new flows, at increasing offered rates | Achieved connections/s, P50/P99 setup latency, agent CPU, NFQUEUE drops, conntrack occupancy, repeated runs |
+| P1, 2-4 hours on an existing small testbed | Fresh TCP/UDP flows versus reused flows, plus denied new flows, at increasing offered rates; once fail-open, once `--fail-open=false` | Achieved connections/s, P50/P99 setup latency, agent CPU, NFQUEUE drops, conntrack occupancy, and the offered rate at which fail-open starts accepting unevaluated packets |
 | P1, 2-4 hours if existing harness permits | Matched fixed-Pod/fixed-generator comparison with reused versus fresh label sets | Measured identities and churn rate; same policies, topology, flags, APF and images; no claim of full-cluster scaling from a small test |
-| P2, at most 1 hour | Recover existing IPTracker measurements, or retain design-only discussion | No new disk-cache scaling study before the deadline |
+| P2, at most 1 hour | Recover existing IPTracker measurements, or retain design-only discussion | PR 218 logs are now cited; no new disk-cache scaling study before the deadline |
 | Final 2 hours minimum | Human review, bibliography/anonymity/format check, upload and inspect rendered PDF | No unresolved numerical provenance; main text at most 12 pages; introduction at most 3 pages |
 
 Do not require every proposed experiment to proceed. Recover existing evidence

@@ -215,8 +215,11 @@ versus eBPF microbenchmarks. Verify exact binaries and effective flags.
 | 200 | 1.267 / 1.845 | 8.854 / 59.347 | 2.285 / 59.485 |
 | 500 | 1.490 / 5.482 | 7.922 / 57.068 | 11.160 / 57.629 |
 
-- QPS 50 and 100 have JUnit failures in both families despite startup reports;
-  inspect the cases rather than calling all these runs fully successful.
+- QPS 50 and 100 have two JUnit failures each in both families. All four are
+  `WaitForRunningPods - WaitForOldPodsDeleted-Final ... context deadline
+  exceeded` while 5,024-19,999 churn Pods were still terminating: a teardown
+  deletion timeout, not a startup failure. Startup percentiles are complete;
+  deletion latency at those tiers is unmeasured.
 - Cilium's separate QPS-500 repeat has after-scheduling P99 4.257 s and
   end-to-end P99 12.404 s. Keep the two runs visible, not selectively choose one.
 - Kindnet's final tuning bundle, named `5-v1.0.1-plus-nri-plus-apf-exempt`, has
@@ -240,15 +243,82 @@ versus eBPF microbenchmarks. Verify exact binaries and effective flags.
 - Initial setup plus wait is a phase-duration cross-check, not the per-Pod
   latency distribution. Five churn rounds in one run are not five independent
   cold-cluster trials.
-- CPU peaks based on `rate(...[1m])` are maxima of one-minute averages, not
-  instantaneous spikes. Preserve whether an aggregation is per node or fleet
-  wide, and whether it is percent of one CPU or all CPUs.
+- The September node CPU query is `*_instantaneous_node_cpu_cores`
+  (mean/p99/max across nodes over the run, plus `max_kubelet_cpu_cores`); the
+  July Kindnet baseline uses a `rate(...[1m])`-based `mean_node`/`p99_node`
+  query. Do not compare the two families' CPU rows as like for like. A
+  `max_kindnetd_cpu_cores` term exists in the saved query but returned no
+  samples in any run; there is no policy-agent CPU series anywhere.
 - JSON percentiles are insufficient to reconstruct a CDF or valid confidence
   interval over Pods. Plot the available quantiles and individual trials; do
   not synthesize raw samples or average P99s into a pooled P99.
 - Completion counts and failed/pending Pods must accompany survivor latencies.
   An all-zero startup report in `reports/run2_hpt` with JUnit failures is not
   evidence of zero startup latency.
+
+## Gap Scan (September 17)
+
+Both repositories were scanned for the evidence the reviewer critique asked
+for. Recovered values are now in the manuscript (Table 2, Section 6.2, 6.5,
+6.7, 8.1); what is still missing is in Table 4 of the paper.
+
+### Recovered from artifacts
+
+| Run | Phase-1 Pods/s P50 / P90 | Node CPU mean / P99 (cores) | Pod LIST P99 (s) |
+| --- | ---: | ---: | ---: |
+| Cilium gateway 7 / 700 / 3,500 / 35,000 | 284/377, 317/364, 316/372, 170/182 | 0.52/0.71, 0.51/0.69, 0.54/0.69, 0.56/0.81 | 18.8, 14.6, 18.6, 28.8 |
+| Cilium spoke 7 / 700 / 3,500 / 35,000 | 0/327, 323/398, 321/373, 169/181 | 0.51/0.69, 0.61/0.86, 0.54/0.67, 0.55/0.78 | n/a (not extracted) |
+| Cilium mesh 7 / 700 / 3,500 | 277/376, 302/351, 328/385 | 0.54/0.72, 0.54/0.67, 0.63/0.77 | 14.6, 14.0, 18.8 |
+| Cilium QPS 500 verified | 180/412 | not collected | 7.8 |
+| Kindnet QPS 500 baseline | 233/262 | 0.40/0.46 (rate query) | 2.8 |
+| Kindnet tune 5 | 190/225 | 0.63/0.79 | 7.6 |
+
+Sources: `Phase1SchedulingThroughput_*.json` (`perc50`, `perc90`),
+`GenericPrometheusQuery Worker Node CPU Utilization_*.json`,
+`APIResponsivenessPrometheus_simple_*.json` (cluster-scoped `pods` `LIST`).
+The 35,000-ReplicaSet tiers halve Phase-1 throughput and raise Pod LIST P99;
+worker CPU is flat across identity tiers in both families.
+
+### Recovered from the implementation repository
+
+- `docs/testing/README.md` (April 2024, three nodes, no versions recorded):
+  ApacheBench 10,000 requests at concurrency 1,000 completed at 2,317 req/s,
+  P50 5 ms, P99 3,080 ms, connect-dominated, with `nf_conntrack: table full`
+  at `nf_conntrack_max=262144`. Charts: `packet_process_duration_microseconds`
+  P50 80-120 us, P99 170-630 us; `rate(packet_count[30s])` peak ~8,000/s per
+  node. Indicative only; cited as an order-of-magnitude bound on one node's
+  verdict rate.
+- PR 218 single-client integration logs: 10k records 643 ms / 35 MB heap /
+  1 MB bolt; 40k records at 30k writes/s 6.58 s / 174 MB / 8 MB with watch
+  stalls reported above 40k; 10M records at 1,024 writes/s 43 ms / 24.7 GiB
+  heap / 1.25 GiB bolt in 9,828 s. LRU sized to hold all records.
+- `pkg/cmd/cmd.go` `--fail-open` default `true`; `pkg/dataplane/controller.go`
+  sets the NFQUEUE bypass flag when fail-open, queue length 1,024; denied
+  packets never receive the conntrack label. No rate limiter or deny cache.
+- `pkg/networkpolicy/networkpolicy.go`: a `nil` (unresolved) peer matches only
+  `ipBlock`; under default deny an unknown remote source is dropped until
+  metadata arrives (fail-closed, availability delay).
+- `plugins/iptracker/iptracker_networkpolicy.go` `ManagedIPs` returns
+  `divertAll=true`: the IPTracker flavor queues all forwarded traffic.
+- Cilium v1.20.1 source: `bpf-policy-map-max` default 16,384, clamped to
+  [256, 65,536]. At the default the model excludes even the unidirectional
+  35,000 tiers, which completed; the effective setting is unrecorded.
+- Cilium issue 7515 closed by PR 44900 (v1.20.0). The archived v1.18.6
+  700-identity directory has only `cl2-metadata.json` and the generated config;
+  the 34,981/19 counts come from `benchmark_results.md`.
+
+### Confirmed absent
+
+- Any KNP/Kindnet run with more than six ReplicaSets (all use 6 x 5,000). The
+  9.75/9.80/9.85 s Kindnet cells in `benchmark_results.md` have no artifacts.
+- Memory metrics of any kind; policy-agent CPU; Cilium pprof (all
+  `PodPeriodicCommand` pprof captures failed with connection refused).
+- Agent `/metrics` (queue depth, verdict counts, callback latency) at scale.
+- Policy-map dumps, effective Cilium ConfigMap, image digests, effective KNP
+  flags per run. The install manifest pins `kube-network-policies:v1.1.0`
+  with `--nfqueue-id=98` and no `--fail-open`; the cluster spec patches
+  `kindnet:v1.0.1`.
+- Logs for the v1.18.6 and raw-Pod aborts.
 
 ## Claim Gate
 
@@ -257,9 +327,9 @@ versus eBPF microbenchmarks. Verify exact binaries and effective flags.
 | Userspace semantic evaluation with kernel-cached accepted decisions | Supported by current source inspection | Pin the measured binary to that implementation |
 | Less eager identity-related work at endpoint admission | Mechanism hypothesis | Matched identity-turnover experiment and stage timing |
 | Dense mesh exceeds per-endpoint policy-map capacity | Analytical exclusion documented in `f998224`; tier 4 never executed | Verify per-identity expansion and effective limit in the tested Cilium version; distinguish calculated demand from occupancy |
-| Better than Cilium at high identity cardinality | Documented raw-burst failure; completed Cilium sweeps remain successful; matched KNP comparison missing | Matched KNP sweep, measured identities, isolated workload rate |
+| Better than Cilium at high identity cardinality | Documented raw-burst failure; completed Cilium sweeps remain successful; **no KNP run above ~7 identities exists** | Matched KNP sweep, measured identities, isolated workload rate |
 | Zero startup latency from NRI | Incorrect as stated | Claim removal of local asynchronous Pod-IP dependency; timestamp event ordering |
-| Secure by default throughout lifecycle | Not established | Bootstrap, shutdown, missing metadata, queue saturation, and restart tests |
+| Secure by default throughout lifecycle | Not established; fail-open default plus 1,024-packet queue and uncached denials form a documented bypass vector | Bootstrap, shutdown, missing metadata, queue saturation (fail-open and fail-closed), and restart tests |
 | Static-flow throughput parity | Not measured here | Existing traffic benchmark or a small matched connection/throughput test |
 | Lower memory with IPTracker + disk + LRU | Design support, no matched cluster result | Heap/RSS/page-cache measurement with working set larger than LRU |
 | Agentic workload representativeness | Motivation only | Workload trace or explicitly label this a synthetic stress test |

@@ -126,6 +126,63 @@
   note = {\url{https://docs.tigera.io/calico/latest/reference/typha/overview}. Accessed September 16, 2026}
 }
 
+@misc{calicoarch,
+  author = {{Tigera}},
+  title = {Component architecture},
+  howpublished = {Calico Open Source documentation, Felix and Typha},
+  url = {https://docs.tigera.io/calico/latest/reference/architecture/overview},
+  note = {\url{https://docs.tigera.io/calico/latest/reference/architecture/overview}. Accessed September 17, 2026}
+}
+
+@misc{ovsfields,
+  author = {{The Open vSwitch Project}},
+  title = {ovs-fields(7): Conjunctive match fields},
+  howpublished = {Open vSwitch manual, \texttt{conj\_id}},
+  url = {https://www.openvswitch.org/support/dist-docs/ovs-fields.7.txt},
+  note = {\url{https://www.openvswitch.org/support/dist-docs/ovs-fields.7.txt}. Accessed September 17, 2026}
+}
+
+@misc{antreapipeline,
+  author = {{The Antrea Authors}},
+  title = {Antrea {OVS} pipeline},
+  howpublished = {Antrea design documentation},
+  url = {https://antrea.io/docs/main/docs/design/ovs-pipeline/},
+  note = {\url{https://antrea.io/docs/main/docs/design/ovs-pipeline/}. Accessed September 17, 2026; rolling documentation}
+}
+
+@misc{ciliumagentref,
+  author = {{The Cilium Authors}},
+  title = {cilium-agent command reference},
+  howpublished = {Cilium documentation, \texttt{--bpf-policy-map-max}},
+  url = {https://docs.cilium.io/en/stable/cmdref/cilium-agent/},
+  note = {\url{https://docs.cilium.io/en/stable/cmdref/cilium-agent/}. Accessed September 17, 2026. The v1.20.1 source (\texttt{pkg/maps/policymap/cell.go}, \texttt{pkg/option/config.go}) sets the default to 16,384 and clamps the flag to [256, 65,536]; neither is a record of the benchmark configuration}
+}
+
+@misc{cilium7515,
+  author = {{Cilium contributors}},
+  title = {Pods stuck in {Init} when policy map is full},
+  howpublished = {Cilium issue 7515, closed by pull request 44900},
+  url = {https://github.com/cilium/cilium/issues/7515},
+  note = {\url{https://github.com/cilium/cilium/issues/7515}. Accessed September 17, 2026; the fix is reported in the v1.20.0 release notes}
+}
+
+@misc{knptesting,
+  author = {{The Kubernetes Authors}},
+  title = {kube-network-policies testing notes: {ApacheBench} microbenchmark},
+  howpublished = {Repository documentation, docs/testing/README.md},
+  url = {https://github.com/kubernetes-sigs/kube-network-policies/blob/main/docs/testing/README.md},
+  note = {\url{https://github.com/kubernetes-sigs/kube-network-policies/blob/main/docs/testing/README.md}. Local copy inspected at revision 9984dcd; hardware and software versions are not recorded}
+}
+
+@misc{iptracker218,
+  author = {Antonio Ojea and Marek Siarkowicz},
+  title = {Add scalability tests for ipcache},
+  year = {2025},
+  howpublished = {kube-network-policies pull request 218, discussion thread},
+  url = {https://github.com/kubernetes-sigs/kube-network-policies/pull/218},
+  note = {\url{https://github.com/kubernetes-sigs/kube-network-policies/pull/218}. Accessed September 17, 2026; single-client integration test logs, not an independent evaluation}
+}
+
 @misc{k8snetworkpolicy,
   author = {{The Kubernetes Authors}},
   title = {Network Policies},

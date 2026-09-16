@@ -9,13 +9,44 @@ benchmark summary are preserved; neither is an independently verified source.
 At the author's request, [paper.tex](paper.tex) now contains a complete
 AI-generated, non-submission writing exercise:
 **Decoupling Workload Admission from Policy Materialization in Kubernetes**.
-Read the compiled [paper-draft.pdf](paper-draft.pdf). It has nine pages of main
-text, two pages of references, and a provenance appendix, with an architecture
-diagram and separate plots for measured latency and analytical capacity.
+Read the compiled [paper-draft.pdf](paper-draft.pdf). It has eleven pages of
+main text, references, and a provenance appendix, with an architecture
+diagram, separate plots for measured latency and analytical capacity, a
+recovered throughput/CPU table, and an explicit "What the Artifacts Do Not
+Contain" table (Section 6.7).
 It is not attributed to Antonio Ojea and is not eligible for submission as
 human-written text. The evidence limitations remain part of the manuscript.
 The earlier [paper-scaffold.pdf](paper-scaffold.pdf) is a superseded layout
 preview, not the current draft.
+
+## Gap Scan After Self-Review (September 17)
+
+A simulated NSDI review of the draft rated it weak reject, chiefly for the
+absence of any KNP identity-sweep data, missing resource metrics, an
+unquantified NFQUEUE verdict rate, and an unexamined fail-open bypass. Both
+repositories were scanned for anything that could close those gaps:
+
+- **Recovered and added**: Phase-1 scheduling throughput and worker CPU for
+  every September tier and both Kindnet QPS-500 runs (paper Table 2); cluster
+  Pod LIST P99 latency; the exact cause of the QPS 50/100 JUnit asterisks
+  (teardown deletion timeouts); the archived Cilium v1.18.6 700-identity abort
+  and its fix in v1.20.0; the KNP `docs/testing` ApacheBench microbenchmark and
+  Prometheus charts as an indicative verdict-rate bound; PR 218 IPTracker
+  integration-test numbers; the Cilium v1.20.1 `bpf-policy-map-max` default
+  (16,384) and maximum (65,536); the IPTracker flavor's divert-all behavior;
+  the benchmark manifest's fail-open default.
+- **Confirmed absent and now highlighted in the paper (Table 4)**: any KNP run
+  above ~7 identities; memory metrics; policy-agent CPU; agent `/metrics` at
+  scale; policy-map dumps and effective Cilium configuration; image digests
+  and flags per Kindnet run; logs for either abort; an NRI ablation.
+- **Added analysis**: a security paragraph on fail-open plus queue overflow
+  plus uncached denials as a tenant-triggerable bypass, the unknown-remote-peer
+  deny semantics, and related work on conjunctive-match (OVS/Antrea) and
+  ipset (Calico) factoring as kernel-resident alternatives to per-peer
+  expansion.
+
+Details and sources are in [evidence-audit.md](evidence-audit.md) under
+"Gap Scan"; the prioritized reruns are in [author-guide.md](author-guide.md).
 
 ## Immediate Decisions
 
