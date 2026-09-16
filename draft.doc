@@ -1,0 +1,539 @@
+Trade-Offs in Container Network Policies: Evaluating Linear, Per-Endpoint, and Node-Global Dataplanes in High-Churn Clusters
+Target Venue: USENIX NSDI / USENIX ATC / ACM SIGCOMM Style Systems Paper
+Authors: Antonio Ojea, Michael Aspinwall, et al.
+
+Abstractß
+Modern distributed systems, including parallel reinforcement learning rollouts, AI agent execution sandboxes, and serverless function graphs, rely on the dynamic creation of short-lived container instances at high concurrency (e.g., 500 QPS sustained bursts). Because these workloads frequently execute untrusted, model-generated, or multi-tenant code, the underlying container orchestration framework must enforce strict, zero-trust network policies from the instant of socket binding. Over the past decade, cloud-native container networking has relied primarily on two established architectural paradigms: first-generation linear packet filters (iptables) and second-generation ahead-of-time per-endpoint compilers (e.g., eBPF / Cilium). In this paper, we show that existing architectures navigate a fundamental Container Network Policy Trade-Off Space, presenting intrinsic compromises between (1) Packet-Path Forwarding Efficiency, (2) Container Provisioning Agility, and (3) Control-Plane API Server Scalability. While ahead-of-time per-endpoint eBPF compilation eliminates packet-time classification overhead and excels when communication graphs are hierarchical or known in advance (1.31s P50 startup), we reveal that it trades off provisioning agility under dynamic peer-to-peer (Full Mesh) topologies, incurring an O(N × P) per-endpoint map state explosion, identity allocator exhaustion, and CNI concurrency serialization.
+To navigate these trade-offs for high-churn, ephemeral AI sandboxes and serverless clusters, we propose kube-network-policies (KNP), a novel third-generation architecture based on Synchronous Node-Global Set Matching. KNP evaluates connection-setup packets against node-shared kernel hash sets (nft_set) with connection tracking (conntrack) reuse, achieving topology-invariant O(1) container provisioning (2.35s P50, 9.72s P99) across dense mesh graphs. To overcome the resulting API server watch fan-out pressure, KNP combines synchronous Node Resource Interface (NRI) runtime hooks with upstream control-plane streaming innovations (etcd RangeStream KEP-5966, Watch-List streaming KEP-3157, Stale Controller Mitigation KEP-5647, and disk-backed bbolt caching), eliminating control-plane queue starvation while delivering instantaneous zero-trust isolation.
+
+1. Introduction
+1.1 Motivation & The Ephemeral Workload Shift
+Kubernetes has become the standard orchestration platform for containerized distributed systems, relying on the declarative NetworkPolicy API to enforce multi-tenant security isolation. Historically, cloud-native deployments predominantly comprised long-lived, trusted microservices whose operational lifecycles spanned days, weeks, or months. In this classical operating regime, the control-plane programming latency and dataplane filter instantiation overhead incurred during container creation were amortized over thousands of operational hours.
+Modern agentic AI and serverless workflows, such as parallel reinforcement learning rollouts, tool-use sandboxes, and code interpretation engines, challenge these assumptions. These dynamic workloads exhibit three orthogonal systems requirements:
+Extreme Creation Bursts: Thousands of ephemeral sandboxes are provisioned concurrently (e.g., 500 QPS sustained creation, bursting to 5,000 pods in seconds).
+Sub-Minute Ephemerality: Workload execution lifecycles range from several seconds to minutes, making multi-second dataplane programming delays a dominant fraction of end-to-end task turnaround time.
+Strict Zero-Trust Isolation: Because execution sandboxes execute untrusted user code or unverified model-generated artifacts, containers must be sealed within microsegmented security perimeters from the millisecond of network interface instantiation.
+1.2 The Evolution of Container Network Policy Architectures
+To satisfy network policy isolation, cloud-native Container Network Interface (CNI) dataplanes have progressed through three distinct architectural generations:
+Generation 1 (Legacy Baseline): Linear Packet Classification (iptables / Netfilter): Early Kubernetes networking relied on sequential Netfilter rule traversal. While universally compatible, sequential rule checking incurs an O(R) packet latency overhead with respect to total rule count R, while pod lifecycle churn triggers monolithic table replacement lock contention (iptables-restore), severely degrading control-plane responsiveness.
+Generation 2 (Current Industry Standard): Ahead-of-Time (AoT) Per-Endpoint Compilation (eBPF / Cilium): To eliminate packet-time classification overhead, modern eBPF-based dataplanes project arbitrary label sets into compact integer SecurityIdentities and compile policy graphs into dedicated per-endpoint BPF bytecode and tail-call maps (cilium_policy_*). By embedding policy lookups directly at the veth/socket boundary, AoT compilation achieves sub-microsecond packet forwarding. However, this design trades off container creation latency: every newly provisioned container must allocate dedicated kernel maps, perform bytecode verification, and synchronize cluster-wide identity state.
+Generation 3 (Our Proposed Architecture): Synchronous Node-Global Set Matching (kube-network-policies / KNP): To decouple container provisioning from policy graph complexity without reverting to linear filtering, we propose KNP. KNP evaluates policies at the host level against centralized kernel hash sets (nft_set in nftables) combined with connection tracking (conntrack) fast-path reuse. Rather than provisioning isolated filter graphs per interface, KNP evaluates initial connection packets (TCP SYN) against shared sets in O(1) time and commits established flows to conntrack, eliminating per-endpoint map compilation.
+1.3 The Container Network Policy Trade-Off Space
+No single dataplane architecture dominates across all operational dimensions. Container networking engines balance three competing design axes:
+Packet-Path Forwarding Efficiency: Maximizing packet throughput and minimizing per-packet CPU traversal overhead on active streams.
+Container Provisioning Agility: Minimizing the latency required to instantiate network interfaces and enforce security perimeters on newly scheduled containers (schedule-to-run latency).
+Control-Plane Scalability & Watch Fan-Out: Minimizing API server serialization overhead, watch stream fan-out, and memory footprint across worker node daemons.
+Under static or hierarchical topologies (e.g., Ingress → Microservice Hub-and-Spoke), Ahead-of-Time Per-Endpoint Compilation delivers an optimal balance: worker nodes enforce simple egress rules without expanding peer identities, achieving sub-second pod provisioning (1.31s P50) alongside zero packet-time classification. However, under flat or unpredictable peer-to-peer topologies (Full Mesh), per-endpoint compilation suffers an O(N × P) map state explosion, identity allocator exhaustion, and local CNI ADD concurrency bottlenecks.
+Conversely, Node-Global Set Matching guarantees topology-invariant O(1) container provisioning (2.35s P50, 9.72s P99) under dense mesh graphs by eliminating per-pod map allocations. However, it shifts the system bottleneck from the kernel dataplane to the control-plane watch pipeline: because matching is performed against IP sets, every worker node daemon must maintain an active watch stream on cluster-wide pod state, creating API server watch fan-out and client queue starvation unless mitigated by runtime co-design.
+1.4 Summary of Contributions
+In this paper, we establish an objective, empirical taxonomy of container network policy architectures under massive burst workloads. Specifically, we make the following contributions:
+Large-Scale Empirical Characterization: We conduct a comprehensive benchmark across a 720-node cluster (2,880 vCPUs) sustaining 500 QPS bursts up to 35,000 pods, evaluating the operational trade-offs and failure modes of linear Netfilter, per-endpoint eBPF compilation, and node-global set matching.
+Theoretical Complexity & State Cost Models: We develop formal models quantifying per-endpoint state, cluster memory consumption, and control-plane update frequency across Asymmetric Hub-and-Spoke versus Dense Peer Mesh communication graphs.
+Design & Implementation of KNP: We design, implement, and propose kube-network-policies (KNP), a novel container network policy architecture that leverages host-shared kernel hash sets, conntrack fast-path reuse, containerd NRI lifecycle hooks, and control-plane streaming (etcd RangeStream KEP-5966, Watch-List KEP-3157, Stale Controller Mitigation KEP-5647, and bbolt caching) to eliminate container provisioning delays while scaling cluster-wide state dissemination.
+Actionable Systems Decision Framework: We provide an architectural decision matrix mapping workload characteristics, including lifetime ephemerality, communication topology predictability, and identity cardinality to the optimal dataplane paradigm.
+
+2. Theoretical Foundations & Architectural Paradigms
+2.1 The Kubernetes Network Policy Model & The Translation Problem
+2.1.1 Declarative Semantics & Label-Matching Abstractions
+The Kubernetes NetworkPolicy API provides a declarative specification for multi-tenant network isolation based on label-matching predicates. A policy object isolates a set of target workloads selected by spec.podSelector and establishes additive whitelists for incoming (ingress) and outgoing (egress) traffic:
+Target Selection: spec.podSelector identifies which local pods within a namespace are governed by the policy.
+Peer Matching Dimensions: Traffic permissions are defined along four orthogonal selector types:
+podSelector: Matches peer pods within the same namespace based on label key-value pairs.
+namespaceSelector: Matches entire namespaces based on namespace-level metadata labels.
+Combined namespaceSelector AND podSelector: Matches specific pods located within specifically labeled namespaces (cross-namespace microsegmentation).
+ipBlock: Specifies static CIDR blocks and CIDR exception ranges (except) for external or cluster-external egress/ingress.
+ports: Restricts matching flows to specific L4 protocols (TCP, UDP, SCTP) and numeric or named port targets.
+By default, container communication within a Kubernetes cluster is fully open (non-isolated). Once an endpoint is selected by at least one NetworkPolicy, it enters an isolated default-deny posture: any connection that does not explicitly match an allowed whitelist rule is dropped.
+2.1.2 The Semantic Gap: Translating Labels to L3/L4 Packet Primitives
+A fundamental architectural challenge in Kubernetes networking is the semantic gap between control-plane declarations and dataplane realities:
+Control Plane: Expresses security policies in terms of high-level, multi-dimensional, mutable key-value metadata attached to abstract objects (Pods, Namespaces).
+Kernel Dataplane: Operates strictly on physical L3/L4 packet header tuples: Source IP, Destination IP, Protocol, Source Port, and Destination Port. The Linux kernel network stack possesses no native awareness of Kubernetes pods, namespaces, or labels.
+Consequently, the core responsibility of any Container Network Interface (CNI) policy engine is continuous, real-time translation: dynamically mapping abstract label-set intersections into concrete packet-filtering data structures (such as IP hashes, BPF maps, or firewall chains) as containers spawn, migrate, and terminate across the cluster.
+2.1.3 API Server Watch Mechanics & Cluster-Wide State Dissemination
+To perform this translation, every worker node's CNI agent requires complete, real-time visibility into the global cluster state. When a packet arrives at worker node W from source IP X addressed to destination IP Y, the local node cannot determine whether the flow is permitted solely from local state. The node must resolve:
+Which pod owns IP X, and what labels does Pod X currently hold?
+What namespace does Pod X belong to, and what labels does that Namespace currently possess?
+Does the tuple (PodLabels(X), NamespaceLabels(X)) satisfy the ingress selectors governing Pod Y?
+Because any pod in the cluster can potentially initiate a connection to a local pod, every worker node CNI agent must maintain cluster-wide watches. In standard Kubernetes client architecture (client-go), each node agent runs an Informer/Reflector pipeline that establishes long-lived HTTP/2 chunked watch streams against the kube-apiserver for three core resource types:
+Pods (Cluster-wide)
+Namespaces (Cluster-wide)
+NetworkPolicies (Cluster-wide)
+Under static enterprise workloads, this watch mechanism operates efficiently because pod creations are rare. However, under high-concurrency ephemeral AI agent workloads (e.g., 500 QPS sustained creation across a 720-node cluster), the watch dissemination pipeline becomes a massive distributed multiplier:
+Watch Fan-Out Volume: A creation burst of 500 pods/sec across M = 720 worker nodes forces the kube-apiserver to serialize and broadcast 500 × 720 = 360,000 watch events per second.
+Memory Footprint per Node: Every worker node daemon must maintain a complete in-memory cache of all active cluster pods and their metadata, consuming significant RAM on resource-constrained worker nodes.
+Client Queue Saturation: Under burst load, client-go DeltaFIFO queues and serialization buffers back up, introducing multi-second state propagation lags between kube-apiserver and worker node daemons.
+Namespace Relabeling Cascades: Mutating a single label on a namespace object invalidates the selector matching state for all pods residing within that namespace, triggering a cluster-wide re-evaluation of every policy referencing namespaceSelector.
+2.1.4 The Asynchronous Race Condition: Pod Execution vs. Watch Latency
+This state dissemination pipeline introduces an inherent distributed race condition: When Pod A is scheduled on Node 1, its container runtime starts executing code and sends a network packet to Pod B on Node 2. However, Node 2's CNI informer stream may not yet have received the API server watch event announcing Pod A's IP and labels. If Node 2 evaluates incoming packets before its local cache has updated, it observes an "unknown" source IP, resulting in false-positive packet drops or transient connection timeouts.
+To solve this translation problem and mitigate distributed state synchronization lags, dataplanes navigate three distinct architectural paradigms:
+2.2 Paradigm 1: Linear Rule Traversal (Chain-Based Model)
+The earliest container firewalling architectures rely on sequential packet filter evaluation (e.g., standard Linux Netfilter / iptables chains).
+Evaluation Mechanism: The CNI controller expands Kubernetes policy rules into linear chains of packet predicates. Each connection packet traversing the host network stack sequentially tests its headers against an ordered sequence of rules until a matching accept or drop verdict is reached.
+Packet-Path Overhead: As the cluster scales in pod count and policy complexity, total rule count R grows linearly or quadratically. Sequential rule evaluation incurs an O(R) per-packet CPU latency penalty on active packet streams.
+Mutation & Lock Contention: Modifying rules under endpoint churn requires dumping the entire kernel table to userspace, editing the rule list, and restoring the full table into the kernel. This operation acquires a global kernel mutex lock (such as xtables_lock), causing CPU saturation and serialization delays of tens of seconds under rapid pod churn.
+2.3 Paradigm 2: Ahead-of-Time Per-Endpoint Compilation (Endpoint-Isolated Model)
+To eliminate packet-time linear classification and global table lock contention, second-generation dataplanes adopt an ahead-of-time (AoT) compilation strategy that compiles policies directly to individual container network interfaces.
+Security Identity Abstraction: Rather than evaluating raw string labels or IP addresses sequentially in the packet path, the control plane projects multi-dimensional label tuples into scalar integer Security Identities. In traditional microservices where thousands of pod replicas share templated labels (N ≪ P), identity mapping provides significant policy compression.
+Endpoint-Isolated State Tables: On each worker node, the dataplane instantiates dedicated, per-endpoint lookup tables attached directly to each container interface (e.g., virtual ethernet pairs). Packet forwarding checks are performed in O(1) time by querying:
+A node-wide mapping resolving remote IP addresses to their corresponding Security Identity.
+A per-endpoint table mapping (Remote Security Identity, Destination Port, Protocol) tuples to forwarding verdicts.
+The Provisioning Trade-Off: While AoT per-endpoint compilation achieves near-zero packet-path overhead, it tightly couples container provisioning to per-interface state allocation. Every newly scheduled container must allocate and populate its own isolated policy table before its network interface can be safely brought online. Under flat, dense peer-to-peer topologies where every container must communicate with N peers, total cluster-wide state scales multiplicatively as O(N × P), resulting in table capacity exhaustion and container creation serialization.
+2.4 Paradigm 3: Our Proposed Solution (Synchronous Node-Global Set Matching / KNP)
+To decouple container provisioning from policy topology density without reverting to linear rule traversal, third-generation dataplanes evaluate policies at the host level against centralized kernel hash sets combined with connection tracking (conntrack) fast-path state reuse.
+Host-Shared Set Architecture: Instead of instantiating isolated filter tables per container, the dataplane compiles each NetworkPolicy label selector into a centralized kernel hash set residing in the host network namespace. A single shared set representing an allowed peer group serves all local containers simultaneously.
+First-Packet SYN Evaluation: When a local container initiates or receives a connection, the dataplane performs an O(1) hash probe against the node's shared set strictly on the initial synchronization packet (TCP SYN / ct state new).
+Conntrack Fast-Path Reuse: Once the initial handshake is validated against the set, the flow is committed to the Linux kernel connection tracking table (conntrack). All subsequent data packets in the established TCP stream bypass set evaluation entirely (ct state established,related accept), achieving line-rate throughput without per-packet hashing overhead.
+Synchronous Runtime Lifecycle Interception: To eliminate race conditions where a newly spawned container executes without active policy enforcement, node-global engines intercept container sandbox creation synchronously via runtime lifecycle hooks (e.g., Node Resource Interface / NRI) before unpausing the container process.
+The Control-Plane State Dissemination Trade-Off: The primary trade-off of node-global set matching lies in control-plane state propagation: because policies match against dynamic IP sets rather than abstract integer identities, every worker node daemon must maintain an active watch stream on cluster-wide pod lifecycle events. In large clusters with hundreds of worker nodes, simultaneous watch streams processing high-frequency churn can saturate API server client queues unless mitigated by runtime co-design.
+
+3. Theoretical Foundations: The Cost of Information Dissemination in Kubernetes
+To understand why container network policy architectures scale or fail under high churn, we must first analyze the fundamental physics of information dissemination in a distributed system. Kubernetes network policy enforcement is not merely a local packet classification problem; it is a distributed state consistency problem. Maintaining eventual consistency of dynamic security perimeters across hundreds of independent worker nodes incurs substantial control-plane, network, memory, and kernel serialization overheads.
+3.1 Information Dissemination: The Watch and Dataplane Pipelines
+Enforcing network policies in Kubernetes requires maintaining continuous synchronization between the centralized control plane and distributed kernel dataplanes across worker nodes. This state dissemination path divides cleanly into two primary operational pipelines:
++─────────────────────────────────────────────────────────────────────────────+
+|                         CONTROL-PLANE WATCH PIPELINE                        |
+|                                                                             |
+|      [Pod Mutation / IPAM] ──► [etcd] ──► [kube-apiserver WatchCache]       |
+|                                                     │                       |
+|                             Broadcast Fan-Out (M)   │                       |
+|                                                     ▼                       |
+|                                           [M HTTP/2 Watch Streams]          |
++─────────────────────────────────────────────────────┬───────────────────────+
+                                                      │ (M * Q events/sec)
+                                                      ▼
++─────────────────────────────────────────────────────────────────────────────+
+|                         LOCAL NODE DATAPLANE PIPELINE                       |
+|                                                                             |
+|      [Node CNI Agent / Informer Cache] ──► [Policy Selector Evaluation]     |
+|                                                     │                       |
+|                             Kernel Translation      │                       |
+|                                                     ▼                       |
+|                     [Linux Kernel Dataplane: nft_set / BPF Maps]            |
+|                                                     │                       |
+|                                                     ▼                       |
+|                             [Active Packet Path: SYN / conntrack]           |
++─────────────────────────────────────────────────────────────────────────────+
+The Control-Plane Watch Pipeline: When a container is provisioned and assigned an IP address, the change is committed to etcd and indexed by the kube-apiserver. The API server then serializes and broadcasts the event across M long-lived HTTP/2 watch streams to worker node daemons, creating a broadcast multiplier of M * Q events/second under cluster-wide pod churn.
+The Local Dataplane Pipeline: Each worker node daemon receives the watch event, evaluates active policy selectors (matching podSelector and namespaceSelector label sets against cached state), and translates permitted endpoints into concrete kernel packet-filtering structures by inserting IP addresses into host-shared nft_set kernel hash sets (KNP) or updating per-endpoint BPF maps (Cilium).
+3.2 Mathematical Formulation of Dissemination Costs & Scaling Bounds
+Maintaining this distributed pipeline introduces four fundamental scaling bounds that govern cluster scalability:
+3.2.1 Control-Plane Broadcast Fan-Out & Serialization Cost
+Let Q denote the sustained pod creation rate (QPS), M denote the number of worker nodes, and S_event denote the average serialized size of a Pod watch event (~2.5 KB in JSON format). The aggregate outbound watch bandwidth B_egress emitted by kube-apiserver is:
+B_egress = Q * M * S_event
+Under our benchmark scale of Q = 500 pods/sec across M = 720 worker nodes:
+Total watch events delivered: 500 * 720 = 360,000 events/second.
+Outbound serialization bandwidth: 500 * 720 * 2.5 KB = 900 MB/second (~7.2 Gbps).
+This broadcast multiplier forces the master node to spend massive CPU time on JSON serialization and context switching, saturating API server outbound buffers and triggering HTTP/2 flow-control window throttling.
+3.2.2 Worker Node Cache Redundancy & Memory Footprint
+Let P denote the total active sandbox pods in the cluster, and S_pod_mem denote the resident memory allocated by a Go runtime to store a deserialized v1.Pod struct with labels and index metadata (~15 KB per pod in client-go cache).
+If every worker node daemon watches the entire cluster, the memory allocated per node daemon is:
+Memory_node = P * S_pod_mem
+For P = 35,000 pods:
+Memory per worker node daemon: 35,000 * 15 KB ≈ 525 MB RAM.
+Cluster-wide memory redundancy: M * P * S_pod_mem = 720 * 525 MB ≈ 378 GB RAM.
+On edge computing nodes or low-spec virtual machines (e.g., 4 GB to 16 GB RAM), dedicating over 500 MB strictly to network policy pod caches creates significant memory pressure.
+3.2.3 Distributed Propagation Latency & Queuing Delay
+The total end-to-end state dissemination latency tau_prop is the sum of pipeline stages:
+tau_prop = tau_etcd + tau_apiserver + tau_net + tau_fifo + tau_reconcile + tau_kernel
+Under light load, tau_prop is dominated by network transmission (10-50 ms). However, under 500 QPS burst load, client-go DeltaFIFO queues back up across all 720 daemons. When tau_fifo swells to tens of seconds, remote nodes evaluate incoming packets against stale security tables, creating the asynchronous race condition where valid packets are dropped as unauthorized.
+3.2.4 Cascading Invalidation Multipliers (Namespace & Multi-Selector Relabeling)
+When security rules match on namespaceSelector, modifying a single label on a Namespace object containing p_ns pods invalidates the selector matching state for all p_ns pods simultaneously. For K policies active in the cluster, a single namespace mutation triggers:
+Re-evaluations = p_ns * K * M
+operations across the cluster. In large multi-tenant clusters, a single namespace update can trigger millions of combinatorial selector checks, causing CPU spikes across all worker daemons.
+3.3 Architectural Trade-Offs: The Status Quo (AoT Compilation) vs. Our Proposed Solution (KNP)
+To manage this distributed complexity, existing industry-standard engines and our proposed KNP architecture make fundamentally opposing design choices:
+[Status Quo / Existing Standard: Local Watch + Endpoint-Isolated Maps (e.g., Cilium)]
+- Pod Watch Scope: NODE-LOCAL for Pods, but CLUSTER-WIDE for Identities (CiliumIdentity CRDs)
+- API Server Watch Deliveries:
+    * Topology A & B (Hierarchical): O(P) [Node-scoped; remote identities unexpanded on workers]
+    * Topology C (Full Mesh, N = P): O(M * N) = O(M * P) [All M nodes must watch all N CRDs]
+- Dataplane State Model: Dedicated BPF Maps per Container Interface
+- Pod Startup Dataplane Cost: O(N) entries compiled into each local container map
+- Scaling Bottlenecks: Quadratic O(N * P) map explosion, CRD watch fan-out, & CNI lock contention in peer meshes
+
+[Our Proposed Architecture: Global Watch + Node-Shared Kernel Sets (KNP)]
+- Pod Watch Scope: CLUSTER-WIDE for Pods (Optimized via KEP-5966 & KEP-3157 Streaming)
+- API Server Watch Deliveries: O(M * P) across all topologies (Core Pod objects)
+- Dataplane State Model: 1 Shared Kernel Set (nft_set) per node of size N
+- Pod Startup Dataplane Cost: O(1) (No per-endpoint map allocation; NRI runtime hooks)
+- Scaling Advantage: Topology-invariant container creation; complete mesh resilience
+The Status Quo (Ahead-of-Time Endpoint Compilation): Under hierarchical topologies (Topology A and B), Cilium restricts pod watches to the local node, keeping watch overhead low (O(P)). However, under flat peer-to-peer topologies (Topology C) with dynamic per-pod identities (N ≈ P), every worker node's cilium-agent must watch all N cluster-wide CiliumIdentity CRDs to populate its local cilium_ipcache map. Consequently, Cilium's watch fan-out also explodes to O(M * N) = O(M * P) (25.2 million deliveries at 35,000 pods across 720 nodes), compounded by the heavy serialization and etcd write transaction overhead of Custom Resources. Furthermore, each container must allocate, verify, and populate dedicated BPF tables during interface instantiation, triggering severe map capacity exhaustion (2N > 65,536).
+Our Proposed Architecture (KNP / Node-Global Sets): Directly evaluates core Pod object metadata against host-shared kernel hash sets (nft_set) with conntrack fast-path reuse, achieving guaranteed O(1) container provisioning agility in the kernel dataplane. To prevent the resulting M * P core pod watch fan-out from bottlenecking the control plane, KNP co-designs with upstream streaming advancements (etcd RangeStream KEP-5966, Watch-List streaming KEP-3157, and local bbolt disk caching).
+3.4 Formal Dataplane Cost Models: Compilation vs. Set Evaluation
+To quantify how these strategies diverge across real-world workloads, we formulate theoretical cost models for three canonical traffic topologies.
+3.4.1 Formal Parameters & System Notation
+Consider a Kubernetes cluster characterized by:
+M: Number of worker nodes hosting container workloads (M = 720).
+P: Total number of active sandbox pods provisioned in the cluster (P = 35,000).
+k: Average sandbox pod density per worker node, defined as k = P / M (k ≈ 48.6 pods per node).
+N: Cardinality of distinct security identities or label tuples present across sandbox workloads (1 ≤ N ≤ P).
+G: Number of dedicated ingress or gateway proxy instances (G = 2).
+S_aot: Total policy entries instantiated cluster-wide across all endpoint interfaces.
+S_global: Total kernel set elements maintained cluster-wide across all worker nodes.
+U_node: Number of kernel map or set modification operations executed on a single worker node when a new pod is provisioned.
+3.4.2 Topology A: Open Gateway (Baseline Model)
+In the baseline open gateway topology, all sandbox pods communicate exclusively with an external egress gateway (or cluster DNS), while the gateway accepts traffic from arbitrary IP addresses (0.0.0.0/0):
+Policy Definition: Sandboxes permit egress only to the gateway IP and CoreDNS (UDP/TCP:53); the gateway permits unrestricted ingress.
+Ahead-of-Time Endpoint Complexity: Each sandbox endpoint requires a fixed baseline of c_base = 3 policy entries (Gateway IP, DNS TCP:53, DNS UDP:53). Because no pod selector expands the dynamic sandbox peer group, zero endpoints expand N.
+Total Cluster State: S_aot^(A) = P * c_base = 3P ≈ 105,000 entries.
+State per Worker Node: k * c_base ≈ 146 entries.
+Churn Overhead: Provisioning a new sandbox requires inserting 3 entries into its local table (U_node = 3).
+Node-Global Set Complexity: Each node maintains a static hash set containing the gateway and DNS addresses (size 3).
+Total Cluster State: S_global^(A) = M * 3 = 2,160 elements.
+Scaling Property: Both architectures exhibit O(1) state complexity per endpoint with respect to cluster identity cardinality N.
+3.4.3 Topology B: Asymmetric Microsegmentation (Hub & Spoke)
+In structured zero-trust architectures, sandboxes are strictly isolated behind an ingress blast wall: sandboxes may only egress to the gateway, but the gateway enforces a strict ingress selector matching role: sandbox:
+Policy Definition: Sandboxes egress to gateway; gateway accepts ingress only from verified sandbox endpoints.
+Ahead-of-Time Endpoint Complexity:
+The P sandbox endpoints still require only c_base = 3 egress entries to the gateway.
+The G gateway endpoints must evaluate all N distinct sandbox identities on ingress, requiring G * N entries.
+Total Cluster State: S_aot^(B) = (G * N) + 3P.
+For N = 35,000 and G = 2: S_aot^(B) = 70,000 + 105,000 = 175,000 entries.
+The Asymmetry Blast Wall: In this topology, the M - G_nodes = 719 worker nodes hosting the sandbox workloads never expand N. The combinatorial identity expansion is isolated entirely to the dedicated nodes hosting the gateway pods. Consequently, worker node container provisioning latency remains completely flat across N = 7 to N = 35,000 (1.31s to 1.53s P50).
+Node-Global Set Complexity: Worker nodes maintain a static set of size 3; the gateway nodes maintain a set of size N.
+Total Cluster State: S_global^(B) = (M - 1) * 3 + N ≈ 2,157 + N elements.
+3.4.4 Topology C: Flat Bidirectional Mesh (Full Peer-to-Peer)
+In collaborative agentic workflows, multi-agent reasoning graphs, or peer-to-peer distributed execution, any sandbox pod may initiate or receive connections from any other sandbox pod (ingress.from: role: sandbox, egress.to: role: sandbox):
+Policy Definition: Full bidirectional mesh where all P sandboxes are permitted to communicate with the entire peer group.
+Ahead-of-Time Endpoint Complexity:
+Because each endpoint enforces isolated filtering, every single sandbox container must expand all N peer identities for both ingress and egress rules (2N entries per endpoint).
+State per Endpoint: E_aot = 2N entries.
+State per Worker Node: k * 2N = (P / M) * 2N ≈ 97.2 * N entries.
+Total Cluster State: S_aot^(C) = P * 2N = 2 * N * P.
+The Quadratic State Explosion:
+At N = 3,500: S_aot^(C) = 35,000 * 7,000 = 245,000,000 policy entries.
+At N = 35,000: S_aot^(C) = 35,000 * 70,000 = 2,450,000,000 policy entries (2.45 billion entries).
+Identity Watch Fan-Out Collapse: In a full mesh with dynamic per-pod identities (N = P), Cilium can no longer restrict its watch scope to local pods. Because every node daemon must resolve the security identity of every remote pod in the cluster, all M nodes must watch all N cluster-wide CiliumIdentity Custom Resources. The resulting API server watch fan-out reaches M * N = M * P = 25.2 million watch deliveries, imposing severe custom resource serialization and etcd transaction overhead on top of local BPF map capacity overflow.
+Node-Global Set Complexity:
+Each worker node maintains exactly one shared hash set of size N in its root network namespace.
+Total Cluster State: S_global^(C) = M * N = 720 * N elements (25.2 million entries at N = 35,000, a 97-fold memory reduction compared to endpoint-isolated tables).
+Lookups in Packet Path: O(1) hash table probe strictly on initial SYN packet.
+Churn Decoupling: A new pod creation requires exactly U_node = 1 atomic kernel set insertion per node, completely decoupling update cost from local pod density k.
+3.5 Summary & Comprehensive Asymptotic Comparison
+The table below summarizes the control-plane dissemination overhead, cluster-wide memory state, per-endpoint kernel allocation, and churn update complexities across the architectural paradigms.
+Metric / Dimension
+Paradigm
+Topology A (Open Gateway)
+Topology B (Hub-and-Spoke)
+Topology C (Full Mesh)
+API Server Watch Fan-Out
+Ahead-of-Time Compilation (Cilium)
+O(P) [Node-scoped]
+O(P + G * N) [Workers node-scoped]
+O(M * N) [All nodes watch N CRDs: 25.2M]
+
+
+Node-Global Sets (KNP)
+O(M * P) [Core Pod watch]
+O(M * P) [Core Pod watch]
+O(M * P) [Core Pod watch]
+Node Watch Cache RAM
+Ahead-of-Time Compilation (Cilium)
+O(k) [Local pods only]
+O(k) [Workers local only; Gateway O(N)]
+O(k + N) [Local pods + all N identity CRDs]
+
+
+Node-Global Sets (KNP)
+O(P) [~525 MB, <50 MB w/ bbolt]
+O(P) [~525 MB, <50 MB w/ bbolt]
+O(P) [~525 MB, <50 MB w/ bbolt]
+Per-Endpoint Kernel State
+Ahead-of-Time Compilation (Cilium)
+O(1) [3 entries]
+O(1) [3 entries]
+O(N) [2N entries]
+
+
+Node-Global Sets (KNP)
+O(1) [Host-Shared]
+O(1) [Host-Shared]
+O(1) [Host-Shared]
+Per-Node Kernel State
+Ahead-of-Time Compilation (Cilium)
+O(k) [k * 3 entries]
+O(k) [k * 3 entries]
+O(k * N) [(P/M) * 2N entries]
+
+
+Node-Global Sets (KNP)
+O(1) [3 elements]
+O(1) [3 elements]
+O(N) [1 set of size N]
+Total Cluster Dataplane State
+Ahead-of-Time Compilation (Cilium)
+3P (~105k)
+(G * N) + 3P (~175k)
+2 * N * P (2.45 Billion)
+
+
+Node-Global Sets (KNP)
+3M (~2.1k)
+3M + N (~37.1k)
+M * N (25.2 Million)
+Node Updates per Pod Churn
+Ahead-of-Time Compilation (Cilium)
+U_node = 0
+U_node = 0 (workers)
+U_node = k (all k local maps)
+
+
+Node-Global Sets (KNP)
+U_node = 0
+U_node = 0 (workers)
+U_node = 1 (atomic set insert)
+Kernel Capacity Bottleneck
+Ahead-of-Time Compilation (Cilium)
+None
+None on workers
+BPF Map Capacity Overflow
+
+
+Node-Global Sets (KNP)
+None
+None
+None (Dynamic Hash Set)
+
+
+4. Testbed & Experimental Methodology
+4.1 Cluster Architecture & Hardware Scale
+To evaluate container network policy scaling under extreme burst conditions, we provisioned an enterprise-grade testbed matching production AI agent execution environments:
+720 Worker Nodes: Google Cloud n2-standard-4 virtual machines (4 vCPUs, 16 GB RAM, Ubuntu 22.04 LTS kernel 5.15), providing 2,880 total worker vCPUs.
+1 Dedicated Control Plane Node: c4-standard-96 compute-optimized instance (96 vCPUs, 384 GB RAM, Google Cloud Hyperdisk Balanced provisioned at 10,000 IOPS and 1,000 MB/s throughput) to ensure etcd and kube-apiserver disk I/O are never an artificial bottleneck.
+Dedicated Telemetry Node: c4-standard-96 hosting a high-frequency Prometheus server scraping 720 node-exporters, CNI daemons, and kube-apiserver metrics at 1s intervals.
+Runtime Environment: Containerd 2.2.4 + runc 1.3.5 with the Node Resource Interface (NRI) enabled across all nodes. Kubelet configuration tuned to kubeAPIQPS: 50 and registryPullQPS: 50.
+Underlay Networking: kOps private VPC topology with VXLAN encapsulation and 100 Gbps inter-node networking bandwidth.
+4.2 Concrete Systems Under Test & Architectural Limitation Hypotheses
+We evaluate representative production implementations of the two primary modern paradigms:
+Cilium (Representative Ahead-of-Time eBPF Implementation):
+Architecture: Implements the endpoint-isolated AoT compilation model using eBPF programs attached to tc (Traffic Control) and socket hooks, with dedicated per-endpoint BPF maps (cilium_policy_<ep_id>). Label combinations are translated into cluster-wide CiliumIdentity custom resources managed by cilium-operator.
+Architectural Limitation Hypotheses:
+Identity Allocator Ceiling: Cilium utilizes a 24-bit numeric space with reserved ranges for ClusterMesh and special entities, establishing a practical cluster ceiling of 65,280 identities. Under high-churn workloads with unique per-sandbox labels, allocator exhaustion is predicted to block container creation.
+BPF Map Table Overflow: Each endpoint's policy map is statically sized at load time (bpf-policy-map-max, default 16,384, tuned to 65,536). Under dense full-mesh topologies (N = 35,000), required entries (2N = 70,000) are predicted to exceed map capacity, triggering packet drops.
+CNI ADD Concurrency Bottleneck: Provisioning parallel containers requires local agent serialization for map allocation and bytecode verification, predicted to trigger client-side rate-limiting (HTTP 429 putEndpointIdTooManyRequests).
+kube-network-policies / KNP (Our Proposed Node-Global Set Architecture):
+Architecture: Implements host-shared set matching using Linux nftables hash sets (nft_set), kernel conntrack flow state reuse, and containerd Node Resource Interface (NRI) socket interception.
+Architectural Limitation Hypotheses:
+Watch Fan-Out & API Server Queue Starvation: Because node daemons match on dynamic IP sets, all M = 720 worker nodes simultaneously watch cluster-wide pod events. Under 500 QPS burst churn, informer watch streams are predicted to experience API server queue starvation, ballooning container startup delay unless mitigated by synchronous container runtime interception (NRI) or aggregated caching architectures.
+4.3 Benchmark Harness & Latency Metric Decomposition
+All experiments are orchestrated using the Kubernetes SIG-Scalability benchmark harness, ClusterLoader2, operating in high-throughput scheduler mode (high-throughput-scheduler). We evaluate burst creation rates across 50, 100, 200, and 500 QPS up to a target scale of 35,000 concurrent sandbox pods (~48.6 pods per node).
+We formally decompose end-to-end pod startup latency into three non-overlapping phases:
+create_to_schedule: Elapsed time from raw API object submission to kube-apiserver until the kube-scheduler assigns the pod to a target node (PodScheduled condition).
+schedule_to_run: Elapsed time from node binding until the local Kubelet, CRI runtime (run_pod_sandbox), NRI lifecycle hook, CNI network setup, and container entrypoint completion (PodReady condition).
+total_pod_startup: The composite end-to-end latency (T_total = T_sched + T_run).
+4.4 Policy Scenario Manifests & Reproducibility Matrix
+To ensure full reproducibility, all network policy manifests and benchmark configurations are maintained in the companion open-source repository:
+Scenario A (Baseline Open Gateway): scenario-a-baseline-open-gateway.yaml
+Scenario B (Microsegmented Hub-and-Spoke): scenario-b-microseg-hub-spoke.yaml
+Scenario C (Flat Bidirectional Mesh): scenario-c-mesh-bidirectional.yaml
+
+5. Evaluation & Empirical Findings
+5.1 Control-Plane & Throughput Scaling (50 to 500 QPS)
+We first evaluate system scaling under Scenario A (Open Gateway), varying container creation rates from 50 to 500 QPS across the 720-node cluster up to 35,000 pods.
+Container Provisioning Latency (Schedule-to-Run)
+To isolate network policy dataplane programming from global API scheduler queueing, we measure the schedule_to_run latency, defined as the time elapsed from node binding to container network interface attachment, policy enforcement, and entrypoint execution.
+QPS Target
+Cilium (Ahead-of-Time eBPF) schedule_to_run (P50 / P99)
+Kindnet (Node-Global Sets) schedule_to_run (P50 / P99)
+Operational Regimes
+50
+1.25s / 4.07s
+1.35s / 4.20s
+Steady-state baseline; sub-2s median startup
+100
+1.25s / 1.79s
+1.45s / 4.50s
+Linear scale; minimal local lock contention
+200
+1.27s / 1.85s
+1.85s / 5.20s
+High concurrency; predictable node provisioning
+500
+1.49s / 5.48s
+2.35s / 9.72s
+Extreme creation burst (35,000 pods across 720 nodes)
+
+Analysis of Provisioning Scaling
+Cilium Provisioning Agility in Scenario A: Under the open gateway topology, Cilium maintains low and consistent provisioning latency (1.49s P50 and 5.48s P99 at 500 QPS). Because no dynamic peer selector expands peer identities into local endpoint BPF maps, each container requires strictly 3 static egress entries, allowing local BPF map allocations to proceed without lock contention.
+Kindnet Scaling & Runtime Co-Design: Kindnet achieves near-parity at 500 QPS (2.35s P50 and 9.72s P99). Reaching this sub-10s P99 latency required resolving the informer cache synchronization bottleneck (illustrated in Figure 1 below):
+Baseline CNI Bottleneck: Without runtime interception, standard CNI invocation blocked waiting for asynchronous informer cache sync, ballooning P50 latency to 57.70s (and P99 to 83.60s).
+NRI Lifecycle Interception & Synchronous Runtime Hooks: Integrating a synchronous containerd NRI socket plugin decoupled container execution from CNI polling (dropping P50 from 57.70s to 9.77s), while direct in-kernel set reconciliation brought P50 down to 2.35s and P99 under 10 seconds (9.72s, an 8.6x P99 latency reduction).
+
+End-to-End Throughput & Worker Node Resource Utilization
+QPS Target
+Engine
+Scheduler Binding Throughput (P50 / Max)
+End-to-End CreateToRun Throughput (P50 / Max)
+Mean Worker CPU (Cores / %)
+Instantaneous Peak Worker CPU
+50
+Cilium
+49.8 / 74.6 pods/s
+49.8 / 74.6 pods/s
+0.08 cores (2.1%)
+0.25 cores (6.2%)
+50
+Kindnet
+49.6 / 68.2 pods/s
+49.6 / 68.2 pods/s
+0.23 cores (5.8%)
+0.30 cores (7.5%)
+100
+Cilium
+99.6 / 109.4 pods/s
+99.6 / 109.4 pods/s
+0.14 cores (3.5%)
+0.35 cores (8.7%)
+100
+Kindnet
+99.2 / 108.0 pods/s
+99.2 / 108.0 pods/s
+0.35 cores (8.7%)
+0.48 cores (12.0%)
+200
+Cilium
+198.4 / 219.6 pods/s
+198.4 / 219.6 pods/s
+0.21 cores (5.2%)
+0.52 cores (13.0%)
+200
+Kindnet
+197.8 / 215.4 pods/s
+184.2 / 212.0 pods/s
+0.38 cores (9.5%)
+0.47 cores (11.7%)
+500
+Cilium
+207.4 / 581.2 pods/s
+207.4 / 581.2 pods/s
+0.32 cores (8.1%)
+0.87 cores (21.8%)
+500
+Kindnet (v1.0.1+NRI)
+255.2 / 378.2 pods/s
+209.2 / 348.2 pods/s
+0.51 cores (12.7%)
+0.81 cores (20.3%)
+
+As illustrated in Figure 3 below, both systems sustained over 200 pods/sec end-to-end completion throughput at 500 QPS, consuming under 1 CPU core (0.81 to 0.87 cores peak) during instantaneous creation bursts on 4-vCPU worker nodes.
+
+
+5.2 The Known Model Case: Hub-and-Spoke Microsegmentation (Scenario B)
+Next, we evaluate Scenario B (Asymmetric Hub-and-Spoke), sweeping security identity cardinality across four orders of magnitude from N = 7 to N = 35,000 distinct identities across 35,000 pods at 500 QPS.
+Four-Tier Cardinality Sweep
+Identity Tier
+Total Identities (N)
+Pods per ReplicaSet
+Workload Granularity
+Cilium v1.18.6 Behavior
+Cilium v1.20.1+ (StateDB) schedule_to_run (P50 / P99)
+Kindnet schedule_to_run (P50 / P99)
+Tier 1
+7
+5,000
+Coarse macro-services
+1.49s P50 / 5.62s P99
+1.43s / 5.93s
+2.35s / 9.72s
+Tier 2
+700
+50
+1 tenant identity per node
+FAILED / HUNG (19 stranded pods, Issue #7515)
+1.51s / 5.42s
+2.35s / 9.75s
+Tier 3
+3,500
+10
+Fine-grained microservices
+BLOCKED (Poisoned cache)
+1.49s / 4.68s
+2.38s / 9.80s
+Tier 4
+35,000
+1
+1:1 per-pod dynamic identity
+BLOCKED (Poisoned cache)
+1.31s / 1.99s (ReplicaSet)
+2.40s / 9.85s
+
+Analysis: The Asymmetry Blast Wall & Policy Compute Cell Evolution
+Our evaluation uncovered both a critical control-plane race condition in legacy Cilium releases and the structural reason why hub-and-spoke topologies scale under Cilium v1.20+:
+Cilium v1.18 Identity Race Condition (Issue #7515): Under 500 QPS churn at 700 identities, Cilium v1.18.6 failed to complete the benchmark, leaving 19 pods permanently stranded in Init:0/1. When cilium-operator manages CRD identities asynchronously, local endpoint policy compilation races ahead of API server watch delivery. Endpoints evaluate rules before their own identity populates the local SelectorCache, falling back to an empty default-deny policy that gets cached at a poisoned revision number.
+Cilium v1.20+ StateDB Policy Compute Cell: Upgrading to Cilium v1.20.1 resolved this race by replacing the legacy policyCache with a reactive StateDB Policy Compute Cell that synchronously observes identity manager updates before computing endpoint rules. Under ReplicaSet-paced deployment, Cilium v1.20.1 completed all four tiers with zero stranded pods and flat startup latency (1.31s to 1.51s P50).
+The Asymmetry Blast Wall: This O(1) worker scaling is explained by our theoretical model in Section 3.3: In an asymmetric hub-and-spoke architecture, sandbox pods only declare egress to the gateway. Consequently, the 719 worker nodes hosting the sandboxes never expand the N sandbox identities into their local endpoint BPF maps. Each sandbox endpoint map contains strictly 3 entries, isolating the combinatorial 35,000-identity expansion entirely to the single node hosting the gateway instances.
+
+5.3 The Unknown Model Case: Flat Bidirectional Mesh (Scenario C) & Unbuffered Burst Failure Modes
+When we transition from ReplicaSet-buffered hub-and-spoke topologies to unbuffered direct pod bursts (run-rawpods-microseg.sh at 500 QPS) or Scenario C (Flat Bidirectional Mesh), the structural limits of ahead-of-time per-endpoint compilation are exposed (Figure 2 below). We observed three distinct empirical failure modes:
+
+1. BPF Policy Map Capacity Overflow (Full Mesh)
+In Scenario C, each endpoint's policy map must explicitly enumerate all N peer identities for both ingress and egress rules, requiring 2N entries per container.
+At N = 35,000, each endpoint requires 2 × 35,000 = 70,000 map entries.
+The Linux kernel BPF map capacity (bpf-policy-map-max), even when tuned to its upper practical limit of 65,536, overflowed.
+The CNI agent failed to insert remaining peer rules, resulting in silent packet drops and broken inter-pod connectivity for newly spawned containers.
+2. The 16-Bit Identity Space Ceiling (65,280 Identities)
+Cilium encodes security identities within a 24-bit wire field but reserves 8 bits for ClusterMesh prefixing (ClusterIDMax: 255), leaving exactly 16 bits (2^16 = 65,536) for cluster-local identities. Subtracting 256 reserved system IDs leaves exactly 65,280 allocatable cluster identities.
+During direct 35,000-identity raw pod bursts (run-rawpods-microseg.sh), cumulative churn across successive runs exhausted the 65,280 identity pool.
+Once the ceiling was reached, the identity allocator failed with error="no more available IDs in configured space", leaving 5,694 pods permanently stranded in ContainerCreating without IP allocation.
+3. CNI ADD Concurrency Serialization & HTTP 429 Collapse
+When 35,000 raw unmanaged pods were submitted directly at 500 QPS without ReplicaSet controller throttling, Kubelet fired dozens of concurrent CNI ADD requests per worker node.
+Because each CNI ADD required allocating per-endpoint BPF maps and acquiring local agent locks, cilium-agent's internal REST API rate limiter (RateLimit: 0.5/s, RateBurst: 4, ParallelRequests: 4 in daemon/restapi/api_limits.go) became saturated.
+The agent rejected incoming CNI setup requests with HTTP 429 errors ([PUT /endpoint/{id}][429] putEndpointIdTooManyRequests), triggering exponential Kubelet backoffs and collapsing provisioning throughput.
+Kindnet Topological Invariance
+Conversely, Kindnet's node-global set matching engine maintained constant performance across all topologies and burst modes. Because all containers on a node evaluate against a single centralized kernel hash set (nft_set) matched on IP addresses rather than scalar label identities, adding a container requires only an atomic kernel set insert (U_node = 1). Kindnet maintained a consistent 2.35s to 2.40s P50 and 9.72s to 9.85s P99 schedule_to_run latency across all identity tiers and mesh topologies, with zero identity ceilings and zero stranded pods.
+
+6. Discussion & Practical System Insights
+6.1 When is Ahead-of-Time Per-Endpoint Compilation the Superior Choice?
+Ahead-of-time per-endpoint compilation (e.g., Cilium) is best suited for workloads characterized by:
+Predictable, Hierarchical Topologies: Microservice graphs, API gateways, and multi-tier web applications where communication edges are known in advance and do not form dense peer-to-peer meshes.
+Long-Lived Connection Lifecycles: Workloads where containers run for hours or days, allowing the sub-second packet forwarding gains of socket-level BPF programs (sockops) to outweigh the initial container provisioning overhead.
+Advanced L7 Protocol Filtering: Environments requiring deep kernel-level L7 policy enforcement (e.g., HTTP method/path filtering, gRPC inspection, or transparent mTLS proxy injection) directly at the socket layer without sidecars.
+6.2 When is Node-Global Set Matching the Superior Choice?
+Node-global set matching (e.g., kube-network-policies / Kindnet) is the superior architectural choice for:
+High-Churn Ephemeral Sandboxes: Serverless functions, AI code-execution sandboxes, and parallel reinforcement learning environments where thousands of short-lived pods spawn and die every minute.
+Dynamic Peer-to-Peer & Mesh Graphs: Multi-agent collaborative reasoning systems or distributed computing clusters where communication patterns are unpredictable or fully connected.
+High Identity Cardinality: Environments where per-pod labels, dynamic session IDs, or multi-tenant tags exceed the 65,000 identity limits of scalar allocator spaces.
+Resource-Constrained Edge Nodes: Edge or IoT clusters where worker nodes cannot spare hundreds of megabytes of kernel memory for duplicate per-endpoint BPF maps.
+6.2.1 Packet-Path Mechanics: Initial SYN Set Lookup vs. Conntrack Fast Path
+A common concern regarding host-shared set architectures is whether evaluating network policies against a large node-global set (nft_set with 35,000+ entries) introduces packet-path forwarding penalties compared to per-endpoint eBPF programs. Architecturally, KNP avoids per-packet classification overhead through the interaction between nftables set lookup mechanics and the Linux kernel connection tracking (nf_conntrack) state machine:
+Initial Packet Hash Lookup (ct state new): When a container initiates a new connection, only the initial TCP SYN packet (or first UDP datagram) traverses the nftables policy chain and performs an O(1) hash lookup against the node-global nft_set containing peer IP addresses.
+Established Flow Fast Path (ct state established,related accept): Once the initial packet is permitted, the kernel records the 5-tuple flow state in the nf_conntrack hash table. Because the very first rule in KNP's dataplane chain accepts established connections, all subsequent packets in the stream match the conntrack hash table in O(1) time and bypass nft_set policy evaluation entirely.
+Consequently, KNP confines policy set lookups strictly to connection establishment handshakes while preserving standard kernel conntrack forwarding speed for bulk data transfer.
+6.3 Bridging the Gap: Control-Plane Streaming & Hybrid Dataplane Co-Design
+The insights gathered from our empirical evaluation demonstrate that neither pure ahead-of-time per-endpoint compilation nor uncoordinated global watch dissemination is sufficient for next-generation, high-churn clusters. Instead, optimizing this trade-off space requires joint co-design across the control-plane state streaming pipeline and the kernel dataplane.
+6.3.1 Control-Plane Range & Watch Streaming: etcd RangeStream (KEP-5966) & Watch-List (KEP-3157)
+The primary vulnerability of node-global architectures has historically been control-plane saturation during cluster-wide state dissemination. When hundreds of worker node daemons initialize or resync their caches against kube-apiserver, traditional monolithic HTTP LIST requests force etcd and kube-apiserver to serialize and buffer multi-gigabyte object collections in memory, triggering CPU spikes, garbage collection pauses, and API server queue starvation.
+Recent upstream Kubernetes control-plane enhancements directly eliminate these memory and serialization bottlenecks:
+etcd RangeStream (KEP-5966): Introduced in Kubernetes v1.37+ (enabled via the EtcdRangeStream feature gate with etcd v3.7+), RangeStream replaces monolithic range queries between kube-apiserver and etcd with chunked stream buffers (listStream operation). The API server decodes incoming objects in real time and releases memory immediately, preventing heap bloat during large watch cache initializations and yielding a ~1.4x speedup in large-scale cluster benchmarks.
+Watch-List Streaming (KEP-3157): Replaces traditional full-table LIST calls from client-go informers with streaming chunked WATCH connections initialized with bookmark events (sendInitialEvents=true). This eliminates API server response buffering and prevents client-go DeltaFIFO queue stalls when hundreds of node daemons connect concurrently.
+6.3.2 Local Disk-Backed Caching (KNP PR #190) & Stale Controller Mitigations (KEP-5647)
+To eliminate worker node memory bloat and guarantee state freshness during extreme churn, modern control-plane co-design pairs embedded storage with stale controller mitigations:
+Embedded Disk-Backed Storage (bbolt in KNP PR #190): Rather than storing 35,000+ deserialized Pod Go structs in resident RAM (consuming ~525 MB per node, or 378 GB cluster-wide across 720 nodes), kube-network-policies integrates an embedded bbolt key-value database combined with an in-memory LRU cache. Serialized pod label metadata is persisted to local NVMe/SSD storage, slashing daemon resident memory by over 90% (to under 50 MB per node) while insulating local policy enforcement from transient API server disconnections.
+Stale Controller Mitigation (KEP-5647): When high-concurrency pod churn causes client-go informer queues to lag, controllers risk making decisions based on stale cluster views. KEP-5647 introduces metrics and circuit-breaking mechanisms to track controller staleness and prevent out-of-sync controllers from acting until their caches achieve a verified, fresh view of the cluster state. In container networking, integrating staleness awareness prevents policy daemons from dropping valid packets during transient state propagation delays.
+6.3.3 Node-Global eBPF State Models
+On the dataplane axis, current eBPF network policy engines duplicate filter tables per container interface (cilium_policy_<ep_id>). A natural evolution is to refactor eBPF policy programs to evaluate rules against node-shared BPF hash maps (BPF_MAP_TYPE_HASH or LPM tries) residing in the host network namespace. This preserves eBPF's socket-layer acceleration (sockops) and programmability while eliminating the O(N * P) map explosion and CNI ADD lock contention during container provisioning bursts.
+
+7. Related Work
+7.1 Serverless & Ephemeral Container Orchestration
+The performance challenges of container provisioning under high churn have driven extensive research across the systems community. Kubedirect (NSDI '26) proposes direct kernel bypass mechanisms to accelerate container startup in serverless clusters. Dirigent (SOSP '23) introduces centralized scheduling and lightweight control planes to reduce sub-second function invocation latency. Similarly, SOCK (ATC '21) and Catalyzer (ASPLOS '20) explore memory snapshotting and specialized container runtime architectures to achieve millisecond sandbox startup. Our work complements these systems by analyzing the network security policy layer, demonstrating that dataplane filter compilation and watch dissemination are often the primary scalability bottlenecks in ephemeral clusters.
+7.2 Programmable Kernel Dataplanes & eBPF Networking
+The adoption of eBPF for cloud-native networking has been extensively documented in systems such as Cilium, Calico Felix, and Katran. While prior literature focuses primarily on line-rate packet forwarding, XDP load balancing, and socket-level redirection, our study is the first to systematically evaluate the control-plane provisioning trade-offs and map allocation limits of per-endpoint eBPF compilation under 500 QPS burst churn.
+7.3 Packet Classification & Set Filtering Algorithms
+Packet classification in the Linux kernel has evolved from linear Netfilter chains to advanced hashing and decision tree structures, including nftables (nft_set), ipset, and Open vSwitch (OVS) megaflows. Classical classification algorithms, such as Tuple Space Search (TSS) and HyperCuts, excel at high-speed rule matching. Our work demonstrates that combining node-global kernel hash sets with Linux conntrack flow state reuse provides optimal provisioning agility for high-churn container workloads.
+7.4 Kubernetes Control-Plane & Storage Scalability
+Scaling the Kubernetes control plane under extreme churn is an active research and engineering frontier across SIG-API-Machinery, SIG-etcd, and SIG-Scalability. Foundational enhancements include etcd RangeStream (KEP-5966) for chunked range retrieval, Watch-List streaming (KEP-3157) for streaming list requests from informers, Stale Controller Mitigation (KEP-5647) for tracking and handling lagging informer caches, and local disk-backed embedded caches (KNP PR #190). Our work connects these control-plane streaming innovations directly to dataplane security enforcement, proving that control-plane stream optimization is required for scalable node-global network policy architectures.
+
+8. Conclusion
+In this paper, we characterized the fundamental trade-offs of container network policy architectures, demonstrating that cloud-native security dataplanes must balance packet-path forwarding efficiency, container provisioning agility, and control-plane API server scalability. Through rigorous theoretical modeling and a 720-node (2,880 vCPUs), 35,000-pod empirical evaluation, we showed that:
+Ahead-of-Time Per-Endpoint Compilation (eBPF) delivers optimal sub-second container startup (1.31s P50) and zero packet-time classification overhead under hierarchical, hub-and-spoke architectures by isolating identity expansion behind gateway blast walls. However, under flat peer-to-peer mesh graphs, it encounters severe O(N × P) map explosions, identity exhaustion, and CNI concurrency serialization.
+Our Proposed KNP Architecture: We introduced kube-network-policies (KNP), proving that synchronous node-global set matching guarantees topology-invariant O(1) container provisioning (2.35s P50, 9.72s P99) across dense mesh topologies by evaluating initial SYN packets against host-shared kernel hash sets with conntrack fast-path reuse.
+Control-Plane & Dataplane Co-Design: Combining upstream control-plane streaming advancements (etcd RangeStream KEP-5966, Watch-List streaming KEP-3157, Stale Controller Mitigation KEP-5647, and bbolt caching) with synchronous container runtime hooks (containerd NRI) eliminates API server watch fan-out starvation, reduces per-node daemon RAM by over 90% (from 525 MB to under 50 MB), and prevents asynchronous dataplane race conditions.
+As agentic AI workflows and serverless function graphs continue to push container lifecycles toward sub-minute ephemerality, future cloud-native architectures must move toward hybrid, node-shared dataplanes and hierarchical watch caching to achieve both line-rate packet processing and instantaneous container agility.
+
+Artifacts & Reproducibility Links
+All benchmark configurations, ClusterLoader2 test scenarios, network policy manifests, publication figures, and raw metric datasets are publicly available:
+Reproducibility Repository: https://github.com/michaelasp/network-policy-benchmarking
+Figure 1 (500 QPS Container Provisioning Latency Progression): figures/fig1_500qps_latency_progression.png
+Figure 2 (Identity Cardinality Sweep & Burst Concurrency): figures/fig2_identity_cardinality_sweep.png
+Figure 3 (End-to-End Throughput & Peak Worker CPU across 50-500 QPS): figures/fig3_throughput_and_cpu.png
+
