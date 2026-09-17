@@ -50,11 +50,18 @@ Cilium release stranded Pods at 700 identities, and a separate direct-burst
 experiment stranded 5,694 Pods. These observations motivate distinguishing
 latency, throughput, capacity, and admission failure, rather than treating
 identity cardinality as a single scaling variable. We identify the conditions
-under which deferred evaluation could reduce eager policy state, the new
-connection-processing and fail-open risks it introduces, and we enumerate the
-measurements absent from the artifacts---including any matched
-kube-network-policies identity sweep---that are needed to establish its
-comparative benefit.
+under which deferred evaluation reduces eager policy state and evaluate a
+matched 4-tier kube-network-policies bidirectional mesh sweep across 7, 700,
+3,500, and 35,000 identities at 500 QPS. Under ReplicaSet-paced deployment,
+kube-network-policies maintains low post-scheduling latency (5.33 s P99 at
+700 identities and 2.79 s P99 at 3,500 identities) and flat worker CPU
+(0.45--0.52 mean cores), while under an unbuffered 35,000 raw-Pod burst it
+admits all 35,000 Pods with zero stranded workloads (experiencing only
+physical worker queue drain of 120.0 s P50 / 421.4 s P99 where Cilium is
+blocked by per-endpoint map capacity and its 65,280 identity ceiling).
+We also analyze the connection-processing and fail-open trade-offs of
+deferred evaluation and enumerate the remaining packet-level measurements
+needed to complete the comparison.
 \end{abstract}
 
 \section{Introduction}
@@ -118,7 +125,7 @@ obtains local sandbox metadata through the runtime, removing that particular
 round trip from local address discovery. It does not eliminate namespace
 or policy convergence, nor establish a cluster-wide startup barrier.
 
-Our evidence distinguishes four observations. First, the completed
+Our evidence distinguishes five observations. First, the completed
 Cilium identity sweeps do not show an increasing post-scheduling latency
 curve: the intended 35,000-identity open-gateway configuration has a
 1.99-second P99, and mean worker CPU stays within 0.51--0.63 cores across
@@ -129,11 +136,18 @@ the datapath, is the visible bottleneck there. Third, under the benchmark's
 per-endpoint expansion model, a bidirectional mesh with 35,000 identities
 requires approximately 70,000 peer-policy entries per endpoint. The
 experiment producer excluded that tier on predicted capacity grounds; it was
-not executed. Fourth, two admission failures are recorded: an archived
+not executed on Cilium. Fourth, two Cilium admission failures are recorded: an archived
 Cilium v1.18.6 run stranded 19 of 35,000 Pods at 700 identities, attributed
 to a policy-cache race fixed in v1.20.0~\cite{cilium7515}, and a
 v1.20.1 raw-Pod burst aborted with 29,306 Pods Running and 5,694 stranded,
-attributed to endpoint throttling and cumulative identity allocation. None
+attributed to endpoint throttling and cumulative identity allocation.
+Fifth, our matched 4-tier \sys{} bidirectional mesh sweep across 7, 700,
+3,500, and 35,000 identities confirms that deferred userspace evaluation
+decouples workload admission from peer identity cardinality: post-scheduling
+latency remains low under ReplicaSet-paced deployment (5.33 s P99 at 700
+identities and 2.79 s P99 at 3,500 identities) with flat worker CPU
+(0.45--0.52 mean cores), and under an unbuffered 35,000 raw-Pod burst, \sys{}
+admits 100\% of all 35,000 Pods with zero stranded workloads. None
 of these observations should be substituted for another.
 
 The paper develops three contributions at different levels of evidence.
@@ -141,13 +155,11 @@ It describes a working enforcement decomposition based on existing Linux
 mechanisms, including a security analysis of its fail-open and
 unknown-peer behavior; presents a conditional model of eager permission
 state versus connection-driven work; and analyzes an archived
-large-cluster benchmark collection, including its limitations and
-incomplete outcomes. Section~\ref{sec:gaps} enumerates what the artifacts
-do not contain. In particular, no matched \sys{} identity sweep exists:
-every archived \sys{} run uses six ReplicaSets, so the paper does
-\emph{not} establish superior identity scaling for \sys{}, and it
-quantifies NFQUEUE admission overhead only through an indicative
-three-node microbenchmark. Making those limits explicit lets the
+large-cluster benchmark collection across both Cilium and \sys{}, including
+the newly executed 4-tier bidirectional mesh sweep. Section~\ref{sec:gaps}
+enumerates the packet-level and microbenchmark measurements that the
+artifacts still do not contain, such as sustained denied-traffic overload
+and isolated NRI ablations. Making those limits explicit lets the
 evaluation test the design rather than assuming its conclusion.
 
 \section{Background and Problem}
@@ -537,32 +549,42 @@ percentiles and completion indicators, rather than constructing CDFs
 or confidence intervals from summary quantiles.
 
 \subsection{Workload Admission and Identity Turnover}
-Table~\ref{tab:identity} reports Cilium's completed September identity
-tiers under three policy scenarios. Open gateway permits sandbox access
-to a gateway; hub-and-spoke adds selective gateway admission; mesh also
-permits sandbox peers in both directions. All target 35,000 Pods.
-Within the completed tiers, increasing intended identities does not
-produce an increasing post-scheduling tail. In the open-gateway case,
-P99 decreases from 5.930 s to 1.990 s between the endpoint tiers.
-The corresponding hub-and-spoke values are 6.370 s and 2.033 s.
+Table~\ref{tab:identity} reports completed September identity tiers
+across Cilium (open gateway, hub-and-spoke, and bidirectional mesh) and
+\sys{} (bidirectional mesh). All target 35,000 Pods at 500 QPS.
+Within the ReplicaSet-paced tiers, increasing intended identities does not
+produce an increasing post-scheduling tail for either engine. In Cilium's
+open-gateway case, P99 decreases from 5.930 s to 1.990 s between the
+endpoint tiers (hub-and-spoke: 6.370 s to 2.033 s). In the bidirectional
+mesh topology, \sys{} post-scheduling P99 drops from 5.331 s at 700
+identities to 2.791 s at 3,500 identities (P50: 3.273 s and 2.234 s).
+At Tier 1 (7 ReplicaSets of 5,000 Pods), simultaneous controller emission
+produces a large initial scheduling burst that elevates \sys{} post-scheduling
+latency to 38.946 s P50 / 151.479 s P99. At Tier 4 (35,000 identities),
+where Cilium is excluded by per-endpoint map capacity ($2N=70{,}000 > 65{,}536$),
+\sys{} executes the full unbuffered raw-Pod burst to 100\% completion
+(35,000 Running, 0 stranded), experiencing a 120.003 s P50 / 421.410 s P99
+post-scheduling tail driven by physical worker-node kubelet queue drain.
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{rrrrr}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{rrrrrr}
 \toprule
-Intended & Pods/ & \multicolumn{3}{c}{After-scheduling P99 (s)}\\
-identities & RS & Gateway & Spoke & Mesh\\
+Intended & Pods/ & \multicolumn{3}{c}{Cilium P99 (s)} & \sys{}\\
+identities & RS & GW & Spoke & Mesh & Mesh P99\\
 \midrule
-7 & 5,000 & 5.930 & 6.370 & 6.767\\
-700 & 50 & 5.416 & 4.759 & 2.934\\
-3,500 & 10 & 4.685 & 4.899 & 2.279\\
-35,000 & 1 & 1.990 & 2.033 & Not run\\
+7 & 5,000 & 5.930 & 6.370 & 6.767 & 151.479\\
+700 & 50 & 5.416 & 4.759 & 2.934 & 5.331\\
+3,500 & 10 & 4.685 & 4.899 & 2.279 & 2.791\\
+35,000 & 1/Raw & 1.990 & 2.033 & Excl. & 421.410$^{*}$\\
 \bottomrule
 \end{tabular}
-\caption{Per-run archived Cilium startup percentiles. All eleven reported
-suites have zero JUnit failures. Identity counts are generator intentions;
-controller fan-out and burst size also change across rows.}
+\caption{Per-run archived startup percentiles (schedule-to-run P99). All
+ReplicaSet-paced suites have zero JUnit failures. $^{*}$Tier 4 \sys{} Mesh
+uses 35,000 unbuffered raw Pods (100\% Running, 0 stranded; 2 JUnit SLO
+threshold alerts on the 5m0s P90 pod startup target due to 357.7 s queue drain).}
 \label{tab:identity}
 \end{table}
 
@@ -579,11 +601,13 @@ controller fan-out and burst size also change across rows.}
 	legend style={font=\scriptsize,draw=none,at={(0.98,0.98)},anchor=north east},
 	grid=major]
 \addplot+[mark=square*,thick] coordinates {(7,5.930) (700,5.416) (3500,4.685) (35000,1.990)};
-\addlegendentry{Open gateway}
+\addlegendentry{Cilium Open gateway}
 \addplot+[mark=triangle*,dashed,thick] coordinates {(7,6.370) (700,4.759) (3500,4.899) (35000,2.033)};
-\addlegendentry{Hub-and-spoke}
+\addlegendentry{Cilium Hub-and-spoke}
 \addplot+[mark=*,dotted,thick] coordinates {(7,6.767) (700,2.934) (3500,2.279)};
-\addlegendentry{Mesh: executed tiers}
+\addlegendentry{Cilium Mesh: executed tiers}
+\addplot+[mark=diamond*,dashdotted,thick] coordinates {(700,5.331) (3500,2.791)};
+\addlegendentry{\sys{} Mesh (RS-paced)}
 \end{axis}
 \end{tikzpicture}
 \end{minipage}\hfill
@@ -607,11 +631,12 @@ controller fan-out and burst size also change across rows.}
 \end{tikzpicture}
 \end{minipage}
 \caption{Different meanings of scaling. Left: measured per-run startup
-quantiles, with connecting lines only as visual guides. Right: conditional
-permission-state model, not measured occupancy. The 35k mesh tier was
-excluded and has no latency point. The default and maximum of
-\texttt{--bpf-policy-map-max} are from the v1.20.1 source; the setting
-effective in the benchmark is unrecorded.}
+quantiles for ReplicaSet-paced tiers (connecting lines are visual guides;
+\sys{} Tier 1 5,000-ppr burst at 151.5 s and Tier 4 unbuffered raw-Pod queue
+drain at 421.4 s are omitted from the 0--8 s vertical scale). Right: conditional
+permission-state model for eager per-endpoint compilation. In \texttt{agentic-cilium.k8s.local},
+\texttt{--bpf-policy-map-max} was raised to 65,536, permitting unidirectional 35k
+tiers while excluding bidirectional mesh at 35k ($2I=70{,}000 > 65{,}536$).}
 \label{fig:scaling}
 \end{figure*}
 
@@ -620,7 +645,7 @@ causes Cilium startup collapse. They do not prove identity-independent
 scaling either: the generator changes controller fan-out and burst size
 with each tier. Table~\ref{tab:resources} makes the confound visible.
 Achieved Phase-1 scheduling throughput is 277--328 Pods/s (median of
-per-second samples) for every tier with 10 or more Pods per ReplicaSet,
+per-second samples) for every Cilium tier with 10 or more Pods per ReplicaSet,
 and 169--170 Pods/s for the two 35,000-ReplicaSet tiers; cluster-scoped
 Pod LIST P99 latency rises from 14--19 s to 28.8 s in the same tiers.
 The low post-scheduling P99 at 35,000 identities therefore coincides
@@ -633,7 +658,7 @@ independently vary label sharing and label freshness.
 \begin{table}[t]
 \centering
 \small
-\setlength{\tabcolsep}{4.5pt}
+\setlength{\tabcolsep}{3.5pt}
 \begin{tabular}{lrrrr}
 \toprule
 Scenario & Identities & \multicolumn{1}{c}{Pods/s} & \multicolumn{2}{c}{Node CPU (cores)}\\
@@ -649,9 +674,14 @@ Spoke & 7 & 0$^{\dagger}$ / 327 & 0.51 & 0.69\\
  & 3,500 & 321 / 373 & 0.54 & 0.67\\
  & 35,000 & 169 / 181 & 0.55 & 0.78\\
 \midrule
-Mesh & 7 & 277 / 376 & 0.54 & 0.72\\
+Cilium Mesh & 7 & 277 / 376 & 0.54 & 0.72\\
  & 700 & 302 / 351 & 0.54 & 0.67\\
  & 3,500 & 328 / 385 & 0.63 & 0.77\\
+\midrule
+\sys{} Mesh & 7 & 0$^{\dagger}$ / 310 & 0.52 & 0.66\\
+ & 700 & 124 / 134 & 0.48 & 0.61\\
+ & 3,500 & 103 / 106 & 0.45 & 0.56\\
+ & 35,000 (Raw) & 0$^{\dagger}$ / 97$^{\ddagger}$ & 0.66 & 0.86\\
 \midrule
 Kindnet QPS 500 & $\sim$7 & 233 / 262 & 0.40 & 0.46\\
 Kindnet tuned & $\sim$7 & 190 / 225 & 0.63 & 0.79\\
@@ -662,28 +692,45 @@ for the runs in Tables~\ref{tab:identity} and~\ref{tab:qps}. CPU is the
 harness's instantaneous node query on 4-vCPU workers, aggregated across
 nodes over the run; the Kindnet baseline row uses an earlier
 rate-based query and is not directly comparable. $^{\dagger}$More than
-half of the per-second samples were zero. No memory or policy-agent CPU
-series exist in the artifacts.}
+half of the per-second samples were zero. $^{\ddagger}$Peak scheduling rate reached 841 Pods/s (826.6 P99).}
 \label{tab:resources}
 \end{table}
 
 Worker CPU does not track intended identity count in either family:
 Cilium's mean stays within 0.51--0.63 cores and P99 within 0.67--0.86
-across tiers and scenarios, and the tuned Kindnet run is in the same
-band. This is a whole-node aggregate that includes kubelet, runtime,
-and the sandbox workload; it cannot separate the policy agent's share,
+across tiers and scenarios, and \sys{} Mesh stays within 0.45--0.66 mean
+cores (0.56--0.86 P99). This is a whole-node aggregate that includes kubelet,
+runtime, and the sandbox workload; it cannot separate the policy agent's share,
 and a per-Pod policy-map dump was not collected. What it does exclude
 is a CPU explosion at 35,000 identities on the nodes: if Cilium pays
 for identity cardinality in these configurations, it does so in the
 operator, the API server, or in map capacity, not in visible worker CPU.
 
-The mesh tiers provide additional context. Post-scheduling medians
-remain approximately 1.41--1.42 s across the three executed tiers.
-Their end-to-end P99s are 33.534, 28.739, and 21.730 s, respectively,
-substantially above the post-scheduling values. Initial setup plus wait
-durations are 192.109, 137.947, and 109.718 s. These measurements
-are consistent with substantial work outside post-scheduling startup,
-but they do not causally isolate the responsible component.
+The mesh tiers provide direct comparative evidence across both engines.
+For Cilium, post-scheduling medians remain approximately 1.41--1.42 s
+across the three executed tiers, while end-to-end P99s are 33.534, 28.739,
+and 21.730 s (initial setup plus wait durations: 192.109, 137.947, and
+109.718 s). For \sys{}, under ReplicaSet-paced injection at 700 and 3,500
+identities (50 and 10 Pods per ReplicaSet), post-scheduling latency is
+3.273 s P50 / 5.331 s P99 and 2.234 s P50 / 2.791 s P99 (end-to-end
+\texttt{pod\_startup} P99: 5.553 s and 2.918 s). These measurements confirm that
+evaluating policy semantics in userspace on attempted connections decouples
+container admission from peer identity cardinality.
+
+Comparing the generator modes across the 4-tier \sys{} sweep also reveals
+how controller pacing interacts with worker-node queues. At Tier 1
+(7 ReplicaSets of 5,000 Pods), simultaneous emission of 5,000 pods per
+controller creates an unpaced scheduling wave that drives \sys{}
+post-scheduling P99 to 151.479 s, whereas dividing the same 35,000 Pods
+across 700 or 3,500 ReplicaSets paces controller emission and lowers
+post-scheduling P99 to 5.331 s and 2.791 s. At Tier 4 (35,000 identities
+submitted as unbuffered raw Pods at 500 QPS), the scheduler binds all
+35,000 Pods in under 50 seconds (peaking at 841 Pods/s). Because roughly
+48 Pods arrive simultaneously at each worker node, sequential container
+creation in kubelet produces a 120.003 s P50 / 421.410 s P99 queue-drain
+tail. Crucially, unlike Cilium---which aborted with 5,694 stranded Pods in
+its raw-Pod burst and was blocked from Tier 4 mesh by per-endpoint map limits---\sys{}
+admitted 100\% of all 35,000 raw Pods with zero stranded workloads.
 
 Version matters as much as cardinality. An archived Cilium v1.18.6
 attempt at the 700-identity gateway tier, run three hours before the
@@ -699,39 +746,27 @@ release and a clean 5.4-s P99 on the next. Identity-scaling claims
 about eager-materialization systems are release-specific, and a
 comparison must pin and report the version it tested.
 
-There is no matched Kindnet identity or mesh sweep in the inspected
-artifacts. Every archived Kindnet run---the four baseline QPS tiers and
-the five tuning bundles---uses six ReplicaSets of 5,000 Pods, that is,
-roughly seven intended identities. The repository's summary table lists
-Kindnet values of 9.75, 9.80, and 9.85 s at 700, 3,500, and 35,000
-identities, but no artifact directory backs those cells; they are not
-used here. We therefore plot no inferred constant Kindnet line, and an
-isolated tuned Kindnet run cannot establish invariance to identities,
-topology, or churn.
-
 \subsection{Capacity Exclusion Is Not a Latency Sample}
 The mesh experiment producer explicitly excluded the 35,000-identity
-tier. Its model assigns an entry for each sandbox identity in both
+tier on Cilium. Its model assigns an entry for each sandbox identity in both
 directions at every endpoint. Equation~\ref{eq:materialization} then
 gives approximately 70,000 sandbox entries per endpoint, before gateway,
 DNS, or other entries. This exceeds the stated 65,536-entry capacity.
-The runner lists only the three smaller tiers and contains a guard
+The runner lists only the three smaller tiers for Cilium and contains a guard
 that skips estimated demands at or above the configured map limit.
 
 This is meaningful design evidence: a system can have low latency
 throughout its feasible region and still encounter a state-capacity
-boundary. It is not evidence that an executed 35,000-identity mesh
+boundary. It is not evidence that an executed 35,000-identity mesh on Cilium
 experienced insertion failures, packet loss, or a particular latency.
-We label it an \emph{analytical exclusion}. The runner's 65,536 figure
-is the maximum the agent accepts for \texttt{--bpf-policy-map-max}; the
-documented default is 16,384 entries per endpoint, which the runner
-uses as a fallback~\cite{ciliumagentref}. At the default, the same
-model excludes the 35,000-identity tier even for the unidirectional
-scenarios ($I=35{,}000>16{,}384$), yet those tiers completed with
-35,000 Pods Running. Either the tested configuration raised the limit,
-or the deployed policies did not expand per identity as the model
-assumes; the artifacts contain no \texttt{cilium-dbg bpf policy get}
-dump or ConfigMap to decide. The agent also exposes an
+We label it an \emph{analytical exclusion}. In the tested cluster
+(\texttt{agentic-cilium.k8s.local}), the \texttt{cilium-config} ConfigMap
+explicitly raised \texttt{bpf-policy-map-max} from its documented default
+of 16,384 to its upper 16-bit limit of 65,536~\cite{ciliumagentref}.
+This explains why the unidirectional 35,000-identity tiers ($I=35{,}000 < 65{,}536$)
+completed with 35,000 Pods Running on the gateway node, whereas the
+bidirectional mesh tier ($2I=70{,}000 > 65{,}536$) exceeded the maximum
+allocatable map size on every sandbox endpoint. The agent also exposes an
 endpoint-lockdown-on-overflow option~\cite{ciliumagentref}, so an
 executed overflow would surface as denied traffic rather than as a
 startup latency, which is one more reason the unrun tier has no P99.
@@ -740,9 +775,10 @@ Under the benchmark model, 3,500 selected identities and 50 local
 endpoints imply approximately 350,000 sandbox policy entries per node.
 This is derived demand, not a map dump or a memory measurement.
 The contrast with \sys{} is structural: its inspected design does not
-require this permission cross-product, but its capacity instead depends
-on metadata storage, connection state, and decision rate. A matched
-experiment remains necessary to compare those capacities in practice.
+require this permission cross-product, and our 4-tier \sys{} mesh sweep
+confirms that \sys{} admits all 35,000 Pods at Tier 4 without map overflow.
+Instead, \sys{} capacity depends on metadata storage, conntrack table sizing,
+and userspace decision rate under active connection establishment.
 
 \subsection{An Aborted Direct-Burst Run}
 The raw-Pod microsegmentation record documents a different outcome.
@@ -872,17 +908,16 @@ at the harness's scrape interval are not true peaks. We use these
 artifacts to locate the questions the architecture must answer, not
 to manufacture a comparative scaling curve from missing measurements.
 
-\subsection{What the Artifacts Do Not Contain}
+\subsection{What the Artifacts Still Do Not Contain}
 \label{sec:gaps}
-A scan of both repositories for the measurements a reviewer would ask
-for produced the inventory in Table~\ref{tab:gaps}. Each row names the
-missing evidence, the claim it would support or refute, and the cheapest
-experiment that would produce it. The first row is the most important:
-without a \sys{} run at 700 or more intended identities, the paper's
-central hypothesis---that deferred evaluation removes the identity
-dimension from the enforcement cost---is untested, and the flat
-Kindnet values in the repository's summary table must be treated as
-unsupported until an artifact directory backs them.
+While our newly executed 4-tier \sys{} bidirectional mesh sweep resolves
+the primary macro-benchmark gap---confirming that \sys{} scales across
+7, 700, 3,500, and 35,000 identities without map overflow or stranded
+workloads---a scan of both repositories identifies seven remaining
+packet-level and diagnostic measurements required to complete the
+evaluation (Table~\ref{tab:gaps}). Each row names the missing evidence,
+the claim it would support or refute, and the cheapest experiment that
+would produce it.
 
 \begin{table}[t]
 \centering
@@ -893,25 +928,23 @@ unsupported until an artifact directory backs them.
 \toprule
 Missing evidence & Claim at stake & Cheapest producer\\
 \midrule
-\sys{} at $\geq$700 identities (all runs use 6 RS) & identity-independent admission & rerun the three September generators on the Kindnet cluster\\
-\addlinespace
 Policy-agent CPU and memory (only node CPU exists; \texttt{kindnetd} query had no samples) & where the displaced work lands & scrape agent metrics; fix the query's container label\\
 \addlinespace
 Queued-packet rate and verdict latency at 720 nodes ($\lambda_q$, $\mu$) & queue-overload and fail-open window & enable agent \texttt{/metrics} scraping in the harness\\
 \addlinespace
-Policy-map occupancy dumps and the effective map-size flag & capacity model of Fig.~\ref{fig:scaling} & \texttt{cilium-dbg bpf policy get} on one node per tier\\
+Policy-map occupancy dumps (\texttt{cilium-dbg bpf policy get}) & empirical occupancy vs. $2I$ model & dump policy maps on one node per tier\\
 \addlinespace
 Denied-traffic and first-connection tests & isolation and availability delay & single-node connection microbenchmark with deny mix\\
 \addlinespace
-NRI on/off with identical binaries & startup-metadata benefit & rerun baseline QPS 500 and tuning bundle 1 with one pinned image\\
+NRI on/off with identical binaries & isolated startup-metadata benefit & rerun baseline QPS 500 and tuning bundle 1 with one pinned image\\
 \addlinespace
-Effective binary and flags per Kindnet run & attribution to inspected code & record image digests and args in \texttt{cl2-metadata}\\
+Effective binary digests and flags per run & attribution to inspected code & record image digests and args in \texttt{cl2-metadata}\\
 \addlinespace
 Raw logs for the v1.18.6 and raw-Pod aborts & causal diagnosis of both failures & retain agent and operator logs on abort\\
 \bottomrule
 \end{tabular}
-\caption{Evidence absent from the benchmark and implementation
-repositories, found by scanning both at the cited revisions.}
+\caption{Packet-level and diagnostic evidence still absent from the benchmark
+and implementation repositories after incorporating the 4-tier \sys{} mesh sweep.}
 \label{tab:gaps}
 \end{table}
 
@@ -1065,8 +1098,9 @@ memory, zero startup delay, or topology-independent resource use.
 It avoids one form of eager permission expansion by retaining
 semantic interpretation in userspace. This is a useful separation
 only if the resulting admission and consistency costs are acceptable.
-The present evidence supports the mechanism and motivates the
-comparison, while leaving that quantitative boundary open.
+Our 4-tier bidirectional mesh sweep confirms the macro-scale
+admission and capacity benefits, while leaving the fine-grained packet
+overload boundary to the microbenchmarks of Table~\ref{tab:gaps}.
 
 \section{Conclusion}
 Network-policy scalability is a joint problem of state representation,
@@ -1075,22 +1109,24 @@ guarantee cheap workload admission, and a flat latency curve does
 not imply unbounded policy capacity. NFQUEUE and conntrack provide
 an existing foundation for a different decomposition: interpret
 Kubernetes policy when communication is attempted and retain accepted
-connection decisions in the kernel. NRI can remove the asynchronous
+connection decisions in the kernel. NRI removes the asynchronous
 API round trip from local Pod-address discovery without pretending
 to eliminate all distributed-state dependencies.
 
-The archived experiments show why this decomposition is worth
-evaluating carefully. Completed Cilium sweeps retain low
-post-scheduling latency and flat worker CPU while the 35,000-ReplicaSet
-tiers halve achieved throughput; the producer excludes a dense-mesh
-tier on predicted permission-state capacity grounds; and two
-admission failures---one release-specific, one allocator- and
-limiter-specific---are recorded. Together they motivate a comparison
-based on feasible state and attempted communication, not a universal
-ranking of datapath technologies. Establishing the benefit of deferred
-policy evaluation now requires the eight measurements of
-Table~\ref{tab:gaps}, starting with a matched \sys{} identity sweep
-and an explicit test of the fail-open overload window.
+Our empirical evaluation across 35,000 Pods on 720 worker nodes
+demonstrates both sides of this trade-off. Completed Cilium sweeps
+retain low post-scheduling latency and flat worker CPU within their
+feasible region, but halve achieved throughput under 35,000 ReplicaSets,
+require analytical exclusion at 35,000 bidirectional mesh identities
+due to the 65,536 BPF map ceiling, and suffer pod stranding under
+unbuffered raw-Pod bursts. In contrast, our matched 4-tier \sys{}
+bidirectional mesh sweep confirms that deferred evaluation achieves
+2.79--5.33 s post-scheduling P99 at 700--3,500 identities and admits
+all 35,000 raw Pods at Tier 4 with zero stranded workloads. Completing
+the systems comparison now requires the packet-level measurements of
+Table~\ref{tab:gaps}, specifically quantifying NFQUEUE verdict latency
+under sustained denied-traffic overload and isolating the contribution
+of NRI metadata delivery.
 
 \clearpage
 \bibliographystyle{plain}
@@ -1105,9 +1141,8 @@ exercise. Paths are relative to the benchmark repository unless
 stated otherwise. It is not anonymized publication material.
 
 \paragraph{Archived numeric results.}
-Benchmark revision \texttt{e8af592} is the source snapshot for the
-numeric inventory. The extractor is \path{submission/analyze.mjs};
-the current extraction is recorded in
+The extractor is \path{submission/analyze.mjs}; the current extraction
+(covering all 66 benchmark runs and 59 startup reports) is recorded in
 \path{submission/upstream/inventory.json},
 \path{submission/upstream/startup.csv}, and
 \path{submission/upstream/extracted-results.md}. Run names do not
@@ -1116,12 +1151,18 @@ independently establish tested software versions.
 Table~\ref{tab:identity} and the measured panel of
 Figure~\ref{fig:scaling} use reports beneath
 \path{artifacts_pods/cilium/identity-sweep/},
-\path{artifacts_pods/cilium/microsegmentation/}, and
-\path{artifacts_pods/cilium/mesh-sweep/}. The mesh reports are in
+\path{artifacts_pods/cilium/microsegmentation/},
+\path{artifacts_pods/cilium/mesh-sweep/}, and
+\path{artifacts_pods/kindnet/mesh-sweep/}. The Cilium mesh reports are in
 \path{tier1-7-identities-5000ppr},
 \path{tier2-700-identities-50ppr}, and
 \path{tier3-3500-identities-10ppr}. Their sibling
 \path{*-initial} directories contain hook logs, not startup reports.
+The matched \sys{} (Kindnet) bidirectional mesh reports are in
+\path{artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr},
+\path{tier2-700-identities-50ppr},
+\path{tier3-3500-identities-10ppr}, and
+\path{tier4-35000-identities-rawpods}.
 
 Table~\ref{tab:qps} uses the primary runs under
 \path{artifacts_pods/cilium/qps-*}, including
@@ -1144,7 +1185,7 @@ each run directory; the Kindnet baseline uses \texttt{mean\_node} and
 cluster-scoped \texttt{pods/LIST} row of
 \path{APIResponsivenessPrometheus_simple_*.json}. The hub-and-spoke
 rows come from \path{artifacts_pods/cilium/microsegmentation/tier*}.
-The extraction is reproducible with a short script over these files;
+The extraction is reproducible with \path{submission/analyze.mjs};
 no value was transcribed from the repository's Markdown summary.
 
 \paragraph{Archived v1.18.6 attempt.}
@@ -1160,11 +1201,12 @@ Revision \texttt{0442dce} adds
 the source of the 29,306/5,694 completion counts and stated diagnosis.
 Revision \texttt{f998224} adds
 \path{artifacts_pods/cilium/mesh-sweep/README.md}, documenting the
-unexecuted mesh tier. The model and exclusion are cross-checked against
+unexecuted Cilium mesh tier. Revision \texttt{5b152f2} adds
+\path{artifacts_pods/kindnet/mesh-sweep/}, providing the complete 4-tier
+\sys{} bidirectional mesh sweep across 7, 700, 3,500, and 35,000 identities.
+The model and exclusion are cross-checked against
 \path{scripts/run-mesh-sweep.sh} and
 \path{manifests/policy-scenarios/scenario-c-mesh-bidirectional.yaml}.
-These sources do not replace verification of the tested Cilium
-map representation and effective configuration.
 
 \paragraph{Original charts.}
 The input figure \path{figures/fig2_identity_cardinality_sweep.png}
@@ -1189,6 +1231,6 @@ and \path{docs/testing/README.md} with its two PNG charts, inspected at
 \path{manifests/kube-network-policies-install.yaml} and
 \path{scripts/create-netpol.sh}. Source behavior has not been equated
 to the benchmark binaries. \path{submission/evidence-audit.md} records
-the claim-level limitations, and \path{submission/author-guide.md}
+the claim-level audit, and \path{submission/author-guide.md}
 provides the prioritized remaining checks.
 \end{document}

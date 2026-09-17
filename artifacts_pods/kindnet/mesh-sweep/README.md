@@ -4,7 +4,7 @@ This directory contains the empirical ClusterLoader2 benchmark results for Kindn
 
 In this topology ([`scenario-c-mesh-bidirectional.yaml`](../../../manifests/policy-scenarios/scenario-c-mesh-bidirectional.yaml)), every sandbox pod allows ingress from and egress to `group: sandbox`.
 
-Under Kindnet's architecture, this selector does not compile into per-endpoint policy maps. Instead, all sandboxes on each node evaluate against a single, node-global kernel hash set (`@set_sandboxes_group_sandbox`) containing the IP addresses of matching pods. As a result, datapath evaluation complexity remains strictly $O(1)$ at each node regardless of identity cardinality.
+Under Kindnet and `kube-network-policies` (KNP), workload admission is decoupled from eager policy materialization. Rather than pre-compiling label selectors into per-endpoint kernel maps or selector-specific IP sets during container startup, KNP installs `nftables` steering rules that divert initial connection packets (`ct state new`) to a userspace evaluator via NFQUEUE. The userspace agent resolves source and destination IP addresses against Pod metadata (populated locally at container creation via containerd NRI hooks and across nodes via API informers), evaluates the `NetworkPolicy` label selectors, and issues an `NF_ACCEPT` verdict tagged with a conntrack label (`CTLabelAccept`). Subsequent packets match the conntrack label directly in the kernel fast path. As a result, container startup latency and node policy state remain independent of cluster-wide identity cardinality.
 
 ## Executed Tiers
 

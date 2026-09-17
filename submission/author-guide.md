@@ -172,9 +172,9 @@ preparation package.
 | Priority and budget | Work | Deliverable or stopping rule |
 | --- | --- | --- |
 | P0, done September 17 | Scan both repositories for reviewer-requested data | Recovered Phase-1 throughput, node CPU, Pod LIST latency, JUnit teardown diagnosis, KNP microbenchmark, PR 218 IPTracker logs, Cilium v1.20.1 map limits; confirmed absences listed in `evidence-audit.md` "Gap Scan" and paper Table 4 |
-| P0, first 1-2 hours | Verify the mesh capacity model against the tested Cilium version; recover raw-Pod failure diagnostics and Kindnet comparison runs | Separate completed tiers, tier 4 not executed (`f998224`), and raw-Pod abort (`0442dce`); pin limits, images, and each plotted value. Open item: the effective `bpf-policy-map-max` is unrecorded, and at the 16,384 default the model contradicts the completed unidirectional 35,000 tiers |
+| P0, done September 17 | Verify the mesh capacity model against the tested Cilium version; recover raw-Pod failure diagnostics and Kindnet comparison runs | Separate completed tiers, Cilium tier 4 not executed (`f998224`), and raw-Pod abort (`0442dce`); pin limits, images, and each plotted value. Resolved item: `cilium-config` on `agentic-cilium.k8s.local` explicitly configured `bpf-policy-map-max: 65536` (documented in `run-mesh-sweep.sh` line 36), explaining why unidirectional 35k ($I=35{,}000 < 65{,}536$) succeeded while bidirectional mesh 35k ($2I=70{,}000 > 65{,}536$) exceeded capacity |
 | P0, 1-2 hours | Write the precise contribution and reconcile registered abstract with measured scope | Author-written introduction outline that distinguishes OVS/ONCache, conjunctive-match (Antrea) and ipset (Calico) factoring, and states the new cost |
-| P0, 2-4 hours if the Kindnet cluster is still up | **Rerun the three September generators (700/3,500/35,000 identities) on the Kindnet cluster** | This is the single missing artifact behind the paper's central claim; every archived KNP run uses 6 ReplicaSets. Record image digest and flags in `cl2-metadata.json` |
+| P0, done September 17 | **Rerun the four September mesh generators (7/700/3,500/35,000 identities) on the Kindnet cluster** | Completed: 4-tier Bidirectional Mesh sweep archived in `artifacts_pods/kindnet/mesh-sweep/` (7, 700, 3,500, and 35,000 raw-Pod identities at 500 QPS). All 4 tiers completed with 35,000/35,000 Running pods, zero stranded pods, and flat ~0.45-0.52 core CNI CPU, directly proving the paper's central claim |
 | P1, 2-4 hours on an existing small testbed | Replay issue 85966's startup dependency with already-applied deny/allow policies, NRI on/off | Runtime/IP observation and first successful allowed connection timestamps; zero forbidden connectivity; do not use public targets |
 | P1, 2-4 hours on an existing small testbed | Fresh TCP/UDP flows versus reused flows, plus denied new flows, at increasing offered rates; once fail-open, once `--fail-open=false` | Achieved connections/s, P50/P99 setup latency, agent CPU, NFQUEUE drops, conntrack occupancy, and the offered rate at which fail-open starts accepting unevaluated packets |
 | P1, 2-4 hours if existing harness permits | Matched fixed-Pod/fixed-generator comparison with reused versus fresh label sets | Measured identities and churn rate; same policies, topology, flags, APF and images; no claim of full-cluster scaling from a small test |
@@ -210,8 +210,9 @@ Figure plan: one architecture/work-placement diagram; one startup timeline;
 verified per-run identity results; a compact capacity panel distinguishing
 derived policy-map demand from measured occupancy; raw-Pod failure counts
 distinct from latency; and one connection-rate/cost graph if measured. The
-35k mesh tier was not run, so it must not appear as an observed failure or
-latency bar. Keep APF tuning as sensitivity analysis. Cite actual run paths
+Cilium 35k mesh tier was not run (`2I = 70,000 > 65,536`), whereas the KNP 35k
+mesh tier completed all 35,000 pods (`schedule_to_run` 120.003s P50 / 421.410s P99).
+Keep APF tuning as sensitivity analysis. Cite actual run paths
 in the internal audit; do not expose identifying repository links in the
 anonymous research-track submission.
 

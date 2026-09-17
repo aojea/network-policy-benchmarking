@@ -8,7 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const require = createRequire(import.meta.url);
-const { parse: parseYAML } = require('yaml');
+let parseYAML;
+try {
+  ({ parse: parseYAML } = require('yaml'));
+} catch {
+  parseYAML = (str) => JSON.parse(execFileSync('python3', ['-c', 'import yaml, json, sys; print(json.dumps(yaml.safe_load(sys.stdin.read())))'], { input: str, encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 }));
+}
 
 function hookRunDirectory(path) {
   const boundary = path.indexOf(`${sep}hooks-output${sep}`);

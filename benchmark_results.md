@@ -188,14 +188,14 @@ The performance characteristics of Cilium vs. Kindnet are dictated by how they m
 
 *(Evaluating Scenario C Bidirectional Mesh: Ingress and Egress allowed to `group: sandbox` across 35,000 Pods on 720 worker nodes at 500 QPS)*
 
-In this topology ([`scenario-c-mesh-bidirectional.yaml`](manifests/policy-scenarios/scenario-c-mesh-bidirectional.yaml)), every sandbox pod allows ingress from and egress to `group: sandbox`. Under Cilium's two-tier eBPF architecture, every container endpoint must explicitly expand all $N$ peer identities in both directions ($\sim 2N$ BPF policy map entries per container endpoint). Under Kindnet (`kube-network-policies` + `nftables`), all sandboxes across all nodes evaluate against a single, node-global kernel hash set (`@set_sandboxes_group_sandbox`) containing matching IP addresses ($O(1)$ set lookup).
+In this topology ([`scenario-c-mesh-bidirectional.yaml`](manifests/policy-scenarios/scenario-c-mesh-bidirectional.yaml)), every sandbox pod allows ingress from and egress to `group: sandbox`. Under Cilium's two-tier eBPF architecture, every container endpoint must explicitly expand all $N$ peer identities in both directions ($\sim 2N$ BPF policy map entries per container endpoint). Under Kindnet (`kube-network-policies` + `nftables`), workload admission is decoupled from eager policy materialization: initial connection packets (`ct state new`) are steered via `nftables` to a userspace NFQUEUE evaluator, which checks Pod labels (populated locally via containerd NRI hooks) and issues an `NF_ACCEPT` verdict tagged with a conntrack label (`CTLabelAccept`). Subsequent packets match the conntrack label directly in the kernel fast path, so container startup does not pre-compile per-peer policy maps.
 
 #### Master Mesh Sweep Matrix (Cilium vs. Kindnet)
 
 | Metric / Dimension | Tier 1 (7 IDs / 5k ppr) | Tier 2 (700 IDs / 50 ppr) | Tier 3 (3,500 IDs / 10 ppr) | Tier 4 (35,000 IDs / Raw Pods) |
 | :--- | :---: | :---: | :---: | :---: |
 | **BPF Entries / Endpoint** *(Cilium)* | $\sim 14$ entries | $\sim 1,400$ entries | $\sim 7,000$ entries | $\approx 70,000$ entries *(Exceeds 65,536 ceiling!)* |
-| **nftables Sets / Node** *(Kindnet)* | 1 kernel set (7 IPs $\to$ 35k IPs) | 1 kernel set (700 IPs $\to$ 35k IPs) | 1 kernel set (3.5k IPs $\to$ 35k IPs) | 1 kernel set (35k IPs) |
+| **Policy Materialization at Startup** *(Kindnet)* | $O(1)$ steering rule + local NRI metadata | $O(1)$ steering rule + local NRI metadata | $O(1)$ steering rule + local NRI metadata | $O(1)$ steering rule + local NRI metadata |
 | **Cilium `schedule_to_run` (P50 / P99)** | **1.41s / 6.77s** | **1.42s / 2.93s** | **1.41s / 2.28s** | **BLOCKED / SKIPPED** *(Map Overflow)* |
 | **Kindnet `schedule_to_run` (P50 / P99)** | **38.95s / 151.48s** | **3.27s / 5.33s** | **2.23s / 2.79s** | **120.00s / 421.41s** *(Queue Drain)* |
 | **Cilium `create_to_run` (P50 / P99)** | **8.42s / 33.53s** | **7.43s / 28.74s** | **6.40s / 21.73s** | **BLOCKED / SKIPPED** *(Map Overflow)* |
@@ -212,15 +212,15 @@ In this topology ([`scenario-c-mesh-bidirectional.yaml`](manifests/policy-scenar
 
 #### Architectural Analysis & Core Findings
 
-1. **Kernel Set Invariance at Scale (Tiers 2 and 3)**:
-   * Under steady paced injection (50 pods/RS in Tier 2, 10 pods/RS in Tier 3), Kindnet demonstrates that kernel `nftables` hash sets are strictly invariant to identity cardinality.
+1. **Identity-Cardinality Invariance at Container Admission (Tiers 2 and 3)**:
+   * Under steady paced injection (50 pods/RS in Tier 2, 10 pods/RS in Tier 3), Kindnet demonstrates that decoupling workload admission from policy materialization makes startup latency invariant to identity cardinality.
    * `schedule_to_run` latency dropped from **3.27s P50 / 5.33s P99** at 700 identities down to **2.23s P50 / 2.79s P99** at 3,500 identities.
-   * Unlike Cilium, where every new identity incurs linear BPF map insertion overhead per endpoint, Kindnet evaluates packets against a single hash set in kernel memory.
+   * Unlike Cilium, where every new identity incurs linear BPF map insertion overhead per endpoint during container startup, Kindnet registers local Pod metadata synchronously via NRI and defers semantic policy evaluation to the first connection packet (`ct state new`) via NFQUEUE + conntrack label caching (`CTLabelAccept`).
 
 2. **The 16-Bit Identity Ceiling and Map Overflow (Tier 4 Contrast)**:
-   * Under a 35,000-identity bidirectional mesh, each container endpoint requires $\sim 70,000$ policy entries ($2 \times 35{,}000$).
-   * This hard-overflows Cilium's maximum configurable 16-bit policy map size (`bpf-policy-map-max: 65536`). Furthermore, Cilium's 16-bit identity allocation ceiling caps cluster identities at **65,280**, making Tier 4 unrunnable on Cilium.
-   * In contrast, Kindnet has no concept of an identity allocation ceiling: matching is based on IP addresses within node-local hash sets. Kindnet admitted **100% of all 35,000 pods** with 0 stranded pods and 0 CNI errors.
+   * Under a 35,000-identity bidirectional mesh, each container endpoint in Cilium requires $\sim 70,000$ policy entries ($2 \times 35{,}000$).
+   * This hard-overflows Cilium's configured per-endpoint policy map size (`bpf-policy-map-max: 65536`). Furthermore, Cilium's 16-bit identity allocation ceiling caps cluster identities at **65,280**, making Tier 4 unrunnable on Cilium.
+   * In contrast, Kindnet has no distributed identity allocation ceiling or per-endpoint map expansion: matching is evaluated against Pod metadata in userspace on initial connection packets and cached in conntrack. Kindnet admitted **100% of all 35,000 pods** with 0 stranded pods and 0 CNI errors.
 
 3. **Concurrency Shock vs. Local Kubelet Queue Depth (Tier 4 Mechanics)**:
    * In Tier 4, 35,000 raw pods were dispatched at 500 QPS without ReplicaSet mediation. The Kubernetes scheduler bound all 35,000 pods in ~50 seconds flat (peaking at **841 pods/sec** scheduling throughput).

@@ -5,9 +5,9 @@ from each report. These are per-run summaries, not independent trials, confidenc
 intervals, or proof that a run completed successfully. Do not add component
 percentiles. Report filenames do not establish tested software versions.
 
-Source revision: e8af592c3f3bb2b2c713d4bc745fdaf0f294f3e6.
+Source revision: 7fc7d296026eb980a89cedd576cd38b912ba35e7.
 
-Inventory: 1809 files, 1285 parsed JSON files, 81308 metric values, 55 startup reports.
+Inventory: 1944 files, 1405 parsed JSON files, 87022 metric values, 59 startup reports.
 
 | Run / Source | Metric | P50 (s) | P90 (s) | P99 (s) |
 | --- | --- | ---: | ---: | ---: |
@@ -167,6 +167,18 @@ Inventory: 1809 files, 1285 parsed JSON files, 81308 metric values, 55 startup r
 | [artifacts_pods/kindnet/baseline-sweep/qps-500/agentic-netpol.k8s.local_QPS500_2026-07-29_08-16-38](../../artifacts_pods/kindnet/baseline-sweep/qps-500/agentic-netpol.k8s.local_QPS500_2026-07-29_08-16-38/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-07-29T08:30:10Z.json) | pod_startup | 8.3783 | 21.4052 | 57.6289 |
 | [artifacts_pods/kindnet/baseline-sweep/qps-500/agentic-netpol.k8s.local_QPS500_2026-07-29_08-16-38](../../artifacts_pods/kindnet/baseline-sweep/qps-500/agentic-netpol.k8s.local_QPS500_2026-07-29_08-16-38/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-07-29T08:30:10Z.json) | create_to_schedule | 0.2994 | 0.9994 | 2.7279 |
 | [artifacts_pods/kindnet/baseline-sweep/qps-500/agentic-netpol.k8s.local_QPS500_2026-07-29_08-16-38](../../artifacts_pods/kindnet/baseline-sweep/qps-500/agentic-netpol.k8s.local_QPS500_2026-07-29_08-16-38/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-07-29T08:30:10Z.json) | schedule_to_run | 7.9221 | 20.4107 | 57.0682 |
+| [artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr](../../artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:17:09Z.json) | pod_startup | 39.6299 | 108.9862 | 152.1389 |
+| [artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr](../../artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:17:09Z.json) | create_to_schedule | 0.2678 | 0.7633 | 1.4115 |
+| [artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr](../../artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:17:09Z.json) | schedule_to_run | 38.9458 | 108.4339 | 151.4790 |
+| [artifacts_pods/kindnet/mesh-sweep/tier2-700-identities-50ppr](../../artifacts_pods/kindnet/mesh-sweep/tier2-700-identities-50ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:31:44Z.json) | pod_startup | 3.5154 | 4.6143 | 5.5528 |
+| [artifacts_pods/kindnet/mesh-sweep/tier2-700-identities-50ppr](../../artifacts_pods/kindnet/mesh-sweep/tier2-700-identities-50ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:31:44Z.json) | create_to_schedule | 0.2385 | 0.3404 | 0.4184 |
+| [artifacts_pods/kindnet/mesh-sweep/tier2-700-identities-50ppr](../../artifacts_pods/kindnet/mesh-sweep/tier2-700-identities-50ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:31:44Z.json) | schedule_to_run | 3.2726 | 4.3785 | 5.3311 |
+| [artifacts_pods/kindnet/mesh-sweep/tier3-3500-identities-10ppr](../../artifacts_pods/kindnet/mesh-sweep/tier3-3500-identities-10ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:48:48Z.json) | pod_startup | 2.3412 | 2.7476 | 2.9179 |
+| [artifacts_pods/kindnet/mesh-sweep/tier3-3500-identities-10ppr](../../artifacts_pods/kindnet/mesh-sweep/tier3-3500-identities-10ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:48:48Z.json) | create_to_schedule | 0.0974 | 0.1574 | 0.2312 |
+| [artifacts_pods/kindnet/mesh-sweep/tier3-3500-identities-10ppr](../../artifacts_pods/kindnet/mesh-sweep/tier3-3500-identities-10ppr/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T22:48:48Z.json) | schedule_to_run | 2.2344 | 2.6413 | 2.7912 |
+| [artifacts_pods/kindnet/mesh-sweep/tier4-35000-identities-rawpods](../../artifacts_pods/kindnet/mesh-sweep/tier4-35000-identities-rawpods/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T23:35:08Z.json) | create_to_schedule | 23.9868 | 71.7843 | 106.6915 |
+| [artifacts_pods/kindnet/mesh-sweep/tier4-35000-identities-rawpods](../../artifacts_pods/kindnet/mesh-sweep/tier4-35000-identities-rawpods/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T23:35:08Z.json) | schedule_to_run | 120.0029 | 289.3903 | 421.4102 |
+| [artifacts_pods/kindnet/mesh-sweep/tier4-35000-identities-rawpods](../../artifacts_pods/kindnet/mesh-sweep/tier4-35000-identities-rawpods/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-09-16T23:35:08Z.json) | pod_startup | 139.5574 | 357.6768 | 499.8652 |
 | [manifests/agentic-sandbox/reports](../../manifests/agentic-sandbox/reports/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-07-07T22:51:18Z.json) | create_to_schedule | 45.1143 | 152.8300 | 178.5794 |
 | [manifests/agentic-sandbox/reports](../../manifests/agentic-sandbox/reports/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-07-07T22:51:18Z.json) | schedule_to_run | 6.9100 | 21.1396 | 64.6577 |
 | [manifests/agentic-sandbox/reports](../../manifests/agentic-sandbox/reports/PodStartupLatency_TotalPodStartupLatency_agentic-sandboxes_2026-07-07T22:51:18Z.json) | pod_startup | 56.9580 | 155.4906 | 181.1069 |
@@ -185,7 +197,7 @@ Inventory: 1809 files, 1285 parsed JSON files, 81308 metric values, 55 startup r
 - artifacts_pods/cilium/mesh-sweep/tier2-700-identities-50ppr-initial: 1 files; completion and failure cause require independent evidence.
 - artifacts_pods/cilium/mesh-sweep/tier3-3500-identities-10ppr-initial: 1 files; completion and failure cause require independent evidence.
 - artifacts_pods/cilium/microsegmentation/tier1-7-identities-5000ppr-initial: 2 files; completion and failure cause require independent evidence.
-- artifacts_pods/cilium/microsegmentation/tier4-35000-identities-rawpods: 2 files; completion and failure cause require independent evidence.
+- artifacts_pods/cilium/microsegmentation/tier4-35000-identities-rawpods: 3 files; completion and failure cause require independent evidence.
 
 ## JUnit Outcomes
 
@@ -244,6 +256,10 @@ Failure counts include both overall and individual test cases; they are not coun
 | artifacts_pods/kindnet/baseline-sweep/qps-200/agentic-netpol.k8s.local_QPS200_2026-07-29_07-55-30 | 0 | 0 | 251.525 | 927.667 |
 | artifacts_pods/kindnet/baseline-sweep/qps-50/agentic-netpol.k8s.local_QPS50_2026-07-29_06-56-26 | 2 | 0 | 707.888 | 1758.587 |
 | artifacts_pods/kindnet/baseline-sweep/qps-500/agentic-netpol.k8s.local_QPS500_2026-07-29_08-16-38 | 0 | 0 | 231.522 | 880.550 |
+| artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr | 0 | 0 | 272.147 | 947.154 |
+| artifacts_pods/kindnet/mesh-sweep/tier2-700-identities-50ppr | 0 | 0 | 283.089 | 624.105 |
+| artifacts_pods/kindnet/mesh-sweep/tier3-3500-identities-10ppr | 0 | 0 | 556.613 | 904.544 |
+| artifacts_pods/kindnet/mesh-sweep/tier4-35000-identities-rawpods | 2 | 0 | 587.386 | 1949.809 |
 | manifests/agentic-sandbox/reports | 13 | 0 | 739.438 | 4301.946 |
 | manifests/agentic-sandbox/reports/run2_hpt | 8 | 0 | 1813.491 | 4695.667 |
 | manifests/agentic-sandbox/reports/run3_hpt | 6 | 0 | 553.432 | 3453.247 |

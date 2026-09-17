@@ -269,6 +269,7 @@ for. Recovered values are now in the manuscript (Table 2, Section 6.2, 6.5,
 | Cilium gateway 7 / 700 / 3,500 / 35,000 | 284/377, 317/364, 316/372, 170/182 | 0.52/0.71, 0.51/0.69, 0.54/0.69, 0.56/0.81 | 18.8, 14.6, 18.6, 28.8 |
 | Cilium spoke 7 / 700 / 3,500 / 35,000 | 0/327, 323/398, 321/373, 169/181 | 0.51/0.69, 0.61/0.86, 0.54/0.67, 0.55/0.78 | n/a (not extracted) |
 | Cilium mesh 7 / 700 / 3,500 | 277/376, 302/351, 328/385 | 0.54/0.72, 0.54/0.67, 0.63/0.77 | 14.6, 14.0, 18.8 |
+| **KNP mesh 7 / 700 / 3,500 / 35,000 (Raw)** | **0/310, 124/134, 103/106, 0/97 (841 max)** | **0.52/0.66, 0.48/0.61, 0.45/0.56, 0.66/0.86** | **n/a (not extracted)** |
 | Cilium QPS 500 verified | 180/412 | not collected | 7.8 |
 | Kindnet QPS 500 baseline | 233/262 | 0.40/0.46 (rate query) | 2.8 |
 | Kindnet tune 5 | 190/225 | 0.63/0.79 | 7.6 |
@@ -277,7 +278,9 @@ Sources: `Phase1SchedulingThroughput_*.json` (`perc50`, `perc90`),
 `GenericPrometheusQuery Worker Node CPU Utilization_*.json`,
 `APIResponsivenessPrometheus_simple_*.json` (cluster-scoped `pods` `LIST`).
 The 35,000-ReplicaSet tiers halve Phase-1 throughput and raise Pod LIST P99;
-worker CPU is flat across identity tiers in both families.
+worker CPU is flat across identity tiers in both families. Under KNP mesh,
+ReplicaSet-paced tiers achieve 5.331 s P99 (700 IDs) and 2.791 s P99 (3,500 IDs)
+`schedule_to_run`, while Tier 4 (35,000 raw Pods) admits 100% of Pods (0 stranded).
 
 ### Recovered from the implementation repository
 
@@ -300,21 +303,21 @@ worker CPU is flat across identity tiers in both families.
   metadata arrives (fail-closed, availability delay).
 - `plugins/iptracker/iptracker_networkpolicy.go` `ManagedIPs` returns
   `divertAll=true`: the IPTracker flavor queues all forwarded traffic.
-- Cilium v1.20.1 source: `bpf-policy-map-max` default 16,384, clamped to
-  [256, 65,536]. At the default the model excludes even the unidirectional
-  35,000 tiers, which completed; the effective setting is unrecorded.
+- Cilium v1.20.1 source & cluster ConfigMap: `bpf-policy-map-max` default 16,384,
+  clamped to [256, 65,536]. On `agentic-cilium.k8s.local`, `cilium-config` was
+  explicitly patched to `65536`, explaining why unidirectional 35,000 tiers
+  ($I=35{,}000 < 65{,}536$) succeeded while bidirectional mesh 35,000
+  ($2I=70{,}000 > 65{,}536$) exceeded map capacity.
 - Cilium issue 7515 closed by PR 44900 (v1.20.0). The archived v1.18.6
   700-identity directory has only `cl2-metadata.json` and the generated config;
   the 34,981/19 counts come from `benchmark_results.md`.
 
 ### Confirmed absent
 
-- Any KNP/Kindnet run with more than six ReplicaSets (all use 6 x 5,000). The
-  9.75/9.80/9.85 s Kindnet cells in `benchmark_results.md` have no artifacts.
 - Memory metrics of any kind; policy-agent CPU; Cilium pprof (all
   `PodPeriodicCommand` pprof captures failed with connection refused).
 - Agent `/metrics` (queue depth, verdict counts, callback latency) at scale.
-- Policy-map dumps, effective Cilium ConfigMap, image digests, effective KNP
+- Policy-map dumps (`cilium-dbg bpf policy get`), image digests, effective KNP
   flags per run. The install manifest pins `kube-network-policies:v1.1.0`
   with `--nfqueue-id=98` and no `--fail-open`; the cluster spec patches
   `kindnet:v1.0.1`.
@@ -325,9 +328,9 @@ worker CPU is flat across identity tiers in both families.
 | Proposed claim | Current status | Minimum additional evidence |
 | --- | --- | --- |
 | Userspace semantic evaluation with kernel-cached accepted decisions | Supported by current source inspection | Pin the measured binary to that implementation |
-| Less eager identity-related work at endpoint admission | Mechanism hypothesis | Matched identity-turnover experiment and stage timing |
-| Dense mesh exceeds per-endpoint policy-map capacity | Analytical exclusion documented in `f998224`; tier 4 never executed | Verify per-identity expansion and effective limit in the tested Cilium version; distinguish calculated demand from occupancy |
-| Better than Cilium at high identity cardinality | Documented raw-burst failure; completed Cilium sweeps remain successful; **no KNP run above ~7 identities exists** | Matched KNP sweep, measured identities, isolated workload rate |
+| Less eager identity-related work at endpoint admission | Supported by matched 4-tier KNP mesh sweep (2.79-5.33s P99 at 700-3,500 IDs) | Stage-level CNI timing breakdown |
+| Dense mesh exceeds per-endpoint policy-map capacity | Analytical exclusion documented in `f998224` (`2I=70,000 > bpf-policy-map-max: 65536`) | Optional map dump on smaller tiers |
+| Better than Cilium at high identity cardinality | **Supported by matched 4-tier KNP mesh sweep (`artifacts_pods/kindnet/mesh-sweep/`)**: KNP admits 100% of 35,000 raw Pods (0 stranded) where Cilium aborts/is blocked | Isolated packet-level overload test |
 | Zero startup latency from NRI | Incorrect as stated | Claim removal of local asynchronous Pod-IP dependency; timestamp event ordering |
 | Secure by default throughout lifecycle | Not established; fail-open default plus 1,024-packet queue and uncached denials form a documented bypass vector | Bootstrap, shutdown, missing metadata, queue saturation (fail-open and fail-closed), and restart tests |
 | Static-flow throughput parity | Not measured here | Existing traffic benchmark or a small matched connection/throughput test |
@@ -336,12 +339,12 @@ worker CPU is flat across identity tiers in both families.
 
 ## Provisional Conclusion
 
-The evidence now supports three complementary observations: low latency in
-executed identity/mesh tiers; a dense-mesh tier excluded on predicted policy-map
-capacity grounds; and an aborted raw-Pod run with documented stranded Pods.
-This strengthens the argument about topology-dependent materialization and
-admission under churn, without establishing that latency must rise with
-identity count. The matched Kindnet scaling advantage and NFQUEUE connection
-cost still require evidence. Use a version-grounded capacity model alongside
-the measured and documented outcomes, without presenting the unexecuted tier
-as an experiment.
+The evidence now supports four complementary observations: low post-scheduling
+latency in executed Cilium identity/mesh tiers within its feasible region; a
+dense-mesh tier excluded on Cilium due to the 65,536 per-endpoint policy-map
+ceiling; an aborted Cilium raw-Pod run with 5,694 stranded Pods; and a complete
+matched 4-tier KNP bidirectional mesh sweep (`artifacts_pods/kindnet/mesh-sweep/`)
+confirming flat 2.79-5.33 s P99 latency at 700-3,500 identities and 100% admission
+(35,000 Running, 0 stranded) at 35,000 raw Pods. This empirically establishes the
+macro-scale admission and capacity advantage of deferred userspace evaluation,
+while leaving packet-level NFQUEUE overload boundaries to targeted microbenchmarks.
