@@ -278,9 +278,70 @@ Sources: `Phase1SchedulingThroughput_*.json` (`perc50`, `perc90`),
 `GenericPrometheusQuery Worker Node CPU Utilization_*.json`,
 `APIResponsivenessPrometheus_simple_*.json` (cluster-scoped `pods` `LIST`).
 The 35,000-ReplicaSet tiers halve Phase-1 throughput and raise Pod LIST P99;
-worker CPU is flat across identity tiers in both families. Under KNP mesh,
-ReplicaSet-paced tiers achieve 5.331 s P99 (700 IDs) and 2.791 s P99 (3,500 IDs)
-`schedule_to_run`, while Tier 4 (35,000 raw Pods) admits 100% of Pods (0 stranded).
+worker CPU is flat across identity tiers in both families.
+
+### Kindnet mesh sweep (5b152f2), validated September 17
+
+All four tiers were re-extracted from the JSON; the values below supersede
+any transcription from `artifacts_pods/kindnet/mesh-sweep/README.md`.
+
+| Tier | JUnit | `schedule_to_run` P50 / P99 (s) | `pod_startup` P50 / P99 (s) | `create_to_schedule` P99 (s) | Phase-1 Pods/s P50 / P90 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1: 7 ids, 5,000 ppr | 0 | 38.946 / 151.479 | 39.630 / 152.139 | 1.412 | 0 / 310 |
+| 2: 700 ids, 50 ppr | 0 | 3.273 / 5.331 | 3.515 / 5.553 | 0.418 | 124 / 134 |
+| 3: 3,500 ids, 10 ppr | 0 | 2.234 / 2.791 | 2.341 / 2.918 | 0.231 | 103 / 106 |
+| 4: 35,000 raw Pods, mesh | 2 (startup P90 SLO: 357.7 s > 300 s) | 120.003 / 421.410 | 139.557 / 499.865 | 106.691 | 0 / 97 (max 841) |
+
+- Tiers 1-3 use the same generator (`SandboxPeerMode: mesh`, same ppr) as the
+  Cilium mesh tiers and are a matched comparison. Tier 4 is **not matched**:
+  Cilium's mesh tier 4 was never run, and Cilium's raw-Pod run
+  (`microsegmentation/tier4-35000-identities-rawpods`) has no `SandboxPeerMode`
+  (hub-and-spoke policy).
+- Tier 1 is a 22x P99 gap against Cilium's 6.767 s on the identical
+  configuration, consistent with the July Kindnet 6x5,000 runs (57 s, tuned
+  9.7 s post-scheduling / 95.8 s total). The artifacts do not explain it.
+- KNP tiers 2-3 created Pods at 124/103 Pods/s versus Cilium's 302/328 on the
+  same configured 500 QPS and identical control-plane settings (cluster specs
+  differ only in CNI, kube-proxy, and CIDRs). Cause unrecorded; it lowers the
+  per-node burst and therefore the KNP tail.
+- Tier 4 README claims "scheduler placed all pods in under 50 seconds" and
+  "0 CNI errors": `create_to_schedule` P99 is 106.7 s, and the CNI-latency
+  query returned no samples. Neither claim is usable. The JUnit SLO failures
+  and the tier-1 latency are omitted from that README.
+- Node CPU: 0.52/0.66, 0.48/0.61, 0.45/0.56, 0.66/0.86 mean/P99 cores; tier-1
+  and tier-4 max 2.19 and 2.55 cores.
+- All six `GenericPrometheusQuery Kube Network Policies *` files and the
+  `Kubelet CNI Plugin Operations Latency` file have `"dataItems": null` in
+  every tier. `scripts/query-kindnet-metrics.sh` documents the cause: the
+  deployed Kindnet build has no metrics port. Agent CPU, memory, verdict rate,
+  processing latency, and drops therefore remain **absent**.
+- `Sandbox Pod Density Per Node` reports `max_pods_per_node: 23789` in tier 4
+  (mean 88.8, P99 56): almost certainly pending Pods bucketed under an empty
+  node label, not a real node. Do not cite.
+
+### Enforcement checks (validated September 17)
+
+- **Positive, per Pod, at scale**: `manifests/agentic-sandbox/manifests/sandbox-pod.yaml`
+  and `sandbox-replicaset.yaml` carry a `wait-for-gateway` init container that
+  loops `nc -z -w 1 $GATEWAY_SERVICE_0_SERVICE_HOST $PORT` until a TCP connect
+  succeeds, and logs `Latency: N ms`. With `default-deny-policy.yaml`
+  (`ApplyDefaultDenyPolicy: true` in every archived run),
+  `global-sandbox-policy.yaml` (sandbox egress to `group: gateway` TCP 80) and
+  `gateway-policy.yaml` (gateway ingress from `group: sandbox`), a sandbox
+  reaches `Running` only after one permitted connection was admitted by the
+  source node's egress evaluation and the gateway node's ingress evaluation.
+  Consequence: `schedule_to_run` is an upper bound on first-permitted-
+  communication latency and includes propagation of the new Pod IP to the
+  gateway node. Caveats: sandbox-to-gateway path only; no forbidden path
+  exercised; under KNP fail-open a saturated queue would also pass; the
+  per-Pod `Latency:` log lines were not collected.
+- **Negative, once per cluster**: `scripts/verify-netpol.sh` (two Pods, open ->
+  default-deny ingress blocked -> explicit allow succeeds, 5 s propagation
+  waits). Run at cluster creation on an idle cluster per the operator; output
+  not archived; not invoked by any run script.
+- The earlier manuscript sentence "schedule_to_run ... is not a measurement of
+  policy programming or first permitted communication" was wrong and is
+  corrected in the paper.
 
 ### Recovered from the implementation repository
 
@@ -303,34 +364,48 @@ ReplicaSet-paced tiers achieve 5.331 s P99 (700 IDs) and 2.791 s P99 (3,500 IDs)
   metadata arrives (fail-closed, availability delay).
 - `plugins/iptracker/iptracker_networkpolicy.go` `ManagedIPs` returns
   `divertAll=true`: the IPTracker flavor queues all forwarded traffic.
-- Cilium v1.20.1 source & cluster ConfigMap: `bpf-policy-map-max` default 16,384,
-  clamped to [256, 65,536]. On `agentic-cilium.k8s.local`, `cilium-config` was
-  explicitly patched to `65536`, explaining why unidirectional 35,000 tiers
-  ($I=35{,}000 < 65{,}536$) succeeded while bidirectional mesh 35,000
-  ($2I=70{,}000 > 65{,}536$) exceeded map capacity.
+- Cilium v1.20.1 source: `bpf-policy-map-max` default 16,384, clamped to
+  [256, 65,536]. The value effective on `agentic-cilium.k8s.local` is **not
+  archived**: `run-mesh-sweep.sh` reads the `cilium-config` ConfigMap at run
+  time (fallback 16,384) and its header comment records 65,536. Independent
+  corroboration: `gateway-policy.yaml` admits ingress from every sandbox
+  identity, so the gateway endpoints needed ~35,000 entries in the completed
+  unidirectional 35k tiers; behind a 16,384 map the `wait-for-gateway` gate
+  would have stranded Pods. All 35,000 reached Running, so the effective limit
+  was >= 35,000 unless aggregation applied (v1.20.1 `pkg/policy/aggregate.go`
+  aggregates only into cluster/clustermesh/world/remote-node buckets). A
+  `cilium-dbg bpf policy get` dump on a gateway node would settle it.
 - Cilium issue 7515 closed by PR 44900 (v1.20.0). The archived v1.18.6
   700-identity directory has only `cl2-metadata.json` and the generated config;
   the 34,981/19 counts come from `benchmark_results.md`.
 
 ### Confirmed absent
 
-- Memory metrics of any kind; policy-agent CPU; Cilium pprof (all
-  `PodPeriodicCommand` pprof captures failed with connection refused).
-- Agent `/metrics` (queue depth, verdict counts, callback latency) at scale.
-- Policy-map dumps (`cilium-dbg bpf policy get`), image digests, effective KNP
-  flags per run. The install manifest pins `kube-network-policies:v1.1.0`
-  with `--nfqueue-id=98` and no `--fail-open`; the cluster spec patches
-  `kindnet:v1.0.1`.
-- Logs for the v1.18.6 and raw-Pod aborts.
+- Memory metrics of any kind; policy-agent CPU, verdict rate, processing
+  latency, queue/user drops (six KNP queries added in the mesh sweep all
+  returned no samples; the Kindnet build exposes no metrics port); Cilium
+  pprof (all `PodPeriodicCommand` pprof captures failed with connection
+  refused); kubelet CNI operation latency (query returned no samples).
+- A matched pair at 35,000 identities (Cilium raw-Pod mesh, or KNP
+  1-Pod-per-ReplicaSet), and any repeat trial for any mesh tier.
+- An explanation for the KNP tier-1 151 s tail and the 2.5-3x lower KNP
+  Phase-1 throughput; per-Pod `wait-for-gateway` latencies.
+- Policy-map dumps (`cilium-dbg bpf policy get`), the effective
+  `cilium-config`, image digests, effective KNP flags per run. The install
+  manifest pins `kube-network-policies:v1.1.0` with `--nfqueue-id=98` and no
+  `--fail-open`; the cluster spec uses kops `kindnet: {}` and
+  `scripts/create-netpol.sh` patches `kindnet:v1.0.1`.
+- Logs for the v1.18.6 and raw-Pod aborts; archived `verify-netpol.sh` output.
 
 ## Claim Gate
 
 | Proposed claim | Current status | Minimum additional evidence |
 | --- | --- | --- |
 | Userspace semantic evaluation with kernel-cached accepted decisions | Supported by current source inspection | Pin the measured binary to that implementation |
-| Less eager identity-related work at endpoint admission | Supported by matched 4-tier KNP mesh sweep (2.79-5.33s P99 at 700-3,500 IDs) | Stage-level CNI timing breakdown |
-| Dense mesh exceeds per-endpoint policy-map capacity | Analytical exclusion documented in `f998224` (`2I=70,000 > bpf-policy-map-max: 65536`) | Optional map dump on smaller tiers |
-| Better than Cilium at high identity cardinality | **Supported by matched 4-tier KNP mesh sweep (`artifacts_pods/kindnet/mesh-sweep/`)**: KNP admits 100% of 35,000 raw Pods (0 stranded) where Cilium aborts/is blocked | Isolated packet-level overload test |
+| Less eager identity-related work at endpoint admission | Partially supported: KNP mesh P99 does not rise from 700 to 3,500 identities (5.33 -> 2.79 s) and the 35k mesh tier completes; but tier 1 is 151 s vs Cilium 6.8 s, throughput is 2.5-3x lower, one trial per tier | Repeat tiers 2-3 on both clusters; explain tier-1 tail; equalize achieved Pods/s |
+| Dense mesh exceeds per-endpoint policy-map capacity | Analytical exclusion documented in `f998224`; 65,536 limit documented only in a script comment, corroborated by the completed unidirectional 35k tiers | Map dump and ConfigMap on one gateway node |
+| Better than Cilium at high identity cardinality | **Mixed.** KNP completes the 35k mesh tier Cilium excluded (35,000 Running, 0 stranded) but at 421 s P99 with 2 SLO failures; the Cilium raw-Pod abort used a different policy and is not a matched pair; at 700/3,500 KNP is 0.5-2.4 s slower than Cilium at lower throughput; at 7 identities KNP is 22x slower | Matched 35k pair; repeat trials; agent metrics |
+| Enforcement verified at scale | Positive path only: every sandbox gates on a permitted connection to the gateway (`wait-for-gateway`); negative path checked once per cluster by `verify-netpol.sh`, unarchived | Archive `verify-netpol.sh` output per run; add a denied-connection probe to the sandbox template |
 | Zero startup latency from NRI | Incorrect as stated | Claim removal of local asynchronous Pod-IP dependency; timestamp event ordering |
 | Secure by default throughout lifecycle | Not established; fail-open default plus 1,024-packet queue and uncached denials form a documented bypass vector | Bootstrap, shutdown, missing metadata, queue saturation (fail-open and fail-closed), and restart tests |
 | Static-flow throughput parity | Not measured here | Existing traffic benchmark or a small matched connection/throughput test |
@@ -339,12 +414,18 @@ ReplicaSet-paced tiers achieve 5.331 s P99 (700 IDs) and 2.791 s P99 (3,500 IDs)
 
 ## Provisional Conclusion
 
-The evidence now supports four complementary observations: low post-scheduling
-latency in executed Cilium identity/mesh tiers within its feasible region; a
-dense-mesh tier excluded on Cilium due to the 65,536 per-endpoint policy-map
-ceiling; an aborted Cilium raw-Pod run with 5,694 stranded Pods; and a complete
-matched 4-tier KNP bidirectional mesh sweep (`artifacts_pods/kindnet/mesh-sweep/`)
-confirming flat 2.79-5.33 s P99 latency at 700-3,500 identities and 100% admission
-(35,000 Running, 0 stranded) at 35,000 raw Pods. This empirically establishes the
-macro-scale admission and capacity advantage of deferred userspace evaluation,
-while leaving packet-level NFQUEUE overload boundaries to targeted microbenchmarks.
+The evidence now supports four observations: low post-scheduling latency in
+executed Cilium identity/mesh tiers within its feasible region; a dense-mesh
+tier excluded on Cilium on predicted per-endpoint map demand; an aborted Cilium
+hub-and-spoke raw-Pod run with 5,694 stranded Pods; and a KNP bidirectional
+mesh sweep that matches Cilium at three ReplicaSet-paced tiers (5.33 and
+2.79 s P99 at 700 and 3,500 identities; 151 s at 7 identities with 5,000 ppr)
+and completes an unmatched 35,000 raw-Pod mesh tier (35,000 Running, 0
+stranded, 421 s P99, 2 SLO failures). Because every sandbox gates on a
+permitted connection, these latencies bound first permitted communication.
+The sweep establishes the capacity claim (KNP has no per-endpoint bound that
+excludes the tier) and does not yet establish an admission-latency advantage:
+KNP is slower than Cilium at every matched tier, achieved 2.5-3x lower Pod
+throughput, has one trial per tier, and its agent metrics are empty. Present
+the matched tiers, the unmatched tier, the tier-1 gap, and the throughput
+confound together.

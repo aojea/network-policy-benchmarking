@@ -1,0 +1,44 @@
+\documentclass[letterpaper,twocolumn,10pt]{article}
+\usepackage{usenix2019_v3}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usetikzlibrary{arrows.meta,positioning}
+\pgfplotsset{compat=1.18}
+\pagestyle{plain}
+\hypersetup{pdfauthor={AI-generated author-persona draft},
+	pdftitle={Decoupling Workload Admission from Policy Materialization in Kubernetes},
+	pdfsubject={Non-submission writing exercise}}
+\newcommand{\sys}{\textsc{KNP}}
+\newcolumntype{R}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\title{\Large\bf Decoupling Workload Admission from\\
+Policy Materialization in Kubernetes}
+\author{AI-generated draft written in the voice of the three authors\\
+Non-submission exercise; Traditional Research framing}
+\date{}
+
+\begin{document}
+\maketitle
+\noindent\textbf{Editorial notice.} This document is an AI-generated writing
+exercise produced by three agents impersonating the paper's authors. It is
+not a submission and is not text written by Antonio Ojea, Michael Aspinwall,
+or Dan Winship. Every number is traceable to the archived artifacts listed in
+Appendix~\ref{sec:provenance}; where evidence is missing the text says so.
+
+\input{sections/abstract-intro}
+\input{sections/design}
+\input{sections/evaluation}
+\input{sections/related-discussion}
+
+\clearpage
+\bibliographystyle{plain}
+\bibliography{references}
+
+\clearpage
+\appendix
+\input{sections/appendix}
+\end{document}

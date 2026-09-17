@@ -1,0 +1,295 @@
+\section{Background and Problem}
+\label{sec:background}
+\paragraph{Policy semantics.}
+NetworkPolicy isolates ingress and egress independently. Once any policy
+selects a Pod in a direction, only the union of the applicable policies'
+rules is permitted in that direction; rules add permissions and never
+remove them~\cite{k8snetworkpolicy}. A connection between two isolated
+Pods must pass the source's egress rules and the destination's ingress
+rules, and reply traffic of an allowed connection is implicitly allowed.
+The semantics are connection-oriented, which makes reusing an admission
+decision for the rest of a connection natural; the specification
+prescribes no mechanism.
+
+\paragraph{Lifecycle versus synchronization.}
+Policies and Pods are created asynchronously and the API exposes no
+barrier that says a policy is enforced everywhere. The expectation is
+narrower: once an agent has processed a policy, a new Pod it selects must
+be isolated before its containers start; allow rules may converge later.
+A system can therefore be safe while delaying legitimate traffic, and a
+fast transition to \texttt{Running} proves neither safety nor
+availability. Here a connection gate ties the two together
+(Section~\ref{sec:evaluation}).
+
+\paragraph{Four quantities.}
+``Identity scale'' conflates four things: live endpoints; distinct
+policy-relevant label sets; allocated numeric identities, which can
+outlive the Pods that created them; and materialized datapath entries,
+which depend on the representation. Several Pods share one identity, one
+identity contributes an entry to every endpoint that selects it, and
+permitted pairs are unrelated to active connections.
+Section~\ref{sec:evaluation} says which quantity each experiment varies.
+
+\paragraph{Where enforcement work is placed.}
+An ordered chain costs work per rule visited, but ipset and nftables sets
+are indexed and hold throughput across the set sizes Sutter
+tested~\cite{sutter2017nftables}, and kube-proxy's nftables backend makes
+update cost proportional to what changed~\cite{winship2025nftables}. NVP
+and Open vSwitch translate logical networks into per-host actions and
+cache flow decisions in the kernel with misses handled in
+userspace~\cite{koponen2014nvp,pfaff2015ovs}; OVN's stateful ACLs use
+\texttt{allow-related} backed by conntrack~\cite{ovnacl}. These are the
+closest precedents for our design, and none is stateless. eBPF maps let
+userspace mutate keyed state without replacing the
+program~\cite{linuxbpfmaps}; Cilium keys policy on label-derived numeric
+identities~\cite{ciliumidentities}, and the size of that identity space
+and the capacity of a per-endpoint policy map are different limits. The
+per-peer cross-product is not the only kernel-resident representation
+either: OVS conjunctive match installs an $n\times m$ rule as $n+m$
+flows~\cite{ovsfields}, Antrea compiles NetworkPolicy onto it and marks
+established connections in conntrack~\cite{antreapipeline}, and Calico
+factors selectors into ipsets referenced by a bounded number of
+rules~\cite{calicoarch}.
+
+\paragraph{Problem.}
+Can an engine keep the kernel forwarding path for the bulk of traffic
+while avoiding eager expansion of every permitted peer at every endpoint?
+If so, where does the displaced work go, how does the admission point
+obtain metadata fresh enough to be useful, and what happens to cached
+decisions when policy changes? Packet throughput answers none of these.
+
+\section{Design}
+\label{sec:design}
+\subsection{Connection Admission and Cached Decisions}
+\sys{} splits enforcement into steering, done by nftables, and
+evaluation, done by a userspace agent. The agent watches NetworkPolicies,
+Namespaces, and Pods through the API and learns local Pod addresses from
+the runtime. From the Pods it derives the \emph{managed} addresses, local
+non-hostNetwork Pods selected by some policy, and keeps them in nftables
+sets. A filter chain on the \texttt{postrouting} hook at priority
+$\mathrm{NATSource}-5$, so that it runs before SNAT and sees IPVS traffic
+that skips \texttt{forward}, accepts packets from local sockets owned by
+UID~0, accepts packets whose connection carries the accept label
+\emph{and} is in established or related state, and queues to NFQUEUE any
+remaining packet whose source or destination is in a managed set. An
+\texttt{input} chain does the same for Pod-to-host traffic, queueing only
+\texttt{ct state new} (Figure~\ref{fig:architecture}).
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+	box/.style={draw,align=center,text width=2.65cm,minimum height=0.85cm,font=\small},
+	flow/.style={-{Latex},thick},font=\scriptsize]
+\node[box] (runtime) at (0,0) {Runtime / NRI\\local Pod addresses};
+\node[box] (metadata) at (3.85,0) {Agent view: Pods,\\Namespaces, policies};
+\node[box] (kernel) at (0,-1.65) {nftables steering,\\managed sets, conntrack};
+\node[box] (evaluate) at (3.85,-1.65) {Userspace policy\\evaluation};
+\node[box] (forward) at (0,-3.3) {Kernel forwarding\\for labeled connections};
+\draw[flow] (runtime) -- (metadata);
+\draw[flow] (metadata) -- (evaluate);
+\draw[flow] (kernel.east) -- node[above]{NFQUEUE, uncached} (evaluate.west);
+\draw[flow] (evaluate.south) -- ++(0,-0.45) -| node[pos=0.25,below]{verdict + ct label} (kernel.south east);
+\draw[flow] (kernel.south) -- node[left,align=right]{accept label and\\established/related} (forward.north);
+\end{tikzpicture}
+\caption{Enforcement decomposition. Protocol and host-traffic exceptions
+are omitted. API watches feed the agent's view; NRI supplies local
+observations only, not remote policy synchronization.}
+\label{fig:architecture}
+\end{figure}
+
+The callback parses the headers, resolves source and destination to Pod
+metadata, evaluates egress on the source and ingress on the destination,
+and returns a verdict. An accept verdict carries a conntrack label; from
+then on the bypass rule matches every packet of that connection in the
+kernel. Denied packets are dropped and receive no label, so the next
+attempt on that flow is queued again.
+
+Two properties of this cache matter. It is connection state, not a table
+of permitted peers: cached state is bounded by connections actually made,
+$F_{\ell}$ in Section~\ref{sec:model}, not by the peers a policy could
+admit. And ``first-packet evaluation'' is an approximation: conntrack
+assigns established state only after seeing the reply direction, so a
+handshake's initial packets, retransmissions before the reply, and
+protocol-specific transitions can each reach userspace. The queued rate
+exceeds the connection rate and includes every denied attempt.
+
+nftables keeps a role. It holds the steering rules and the managed sets,
+and a change in which local Pods are selected is a set update; it does
+not execute label selectors. Avoiding the peer cross-product does not
+remove local rule maintenance, and the evaluator's indexes over Pods,
+Namespaces, and policies cost CPU and memory. Once metadata is present
+the decision is local; nothing on the packet path allocates a distributed
+identity. Remote Pod metadata must still reach the node.
+
+\subsection{Runtime Metadata and Startup Isolation}
+If the agent learns its own node's Pod addresses only from the API, the
+chain is: the runtime creates the sandbox and the CNI assigns an address;
+the kubelet writes Pod status; the API server fans it out; the agent's
+watch delivers it. Containers may start, and lifecycle hooks may begin
+waiting on the network, before the last step; issue 85966 records the
+resulting failures~\cite{k8s85966}. \sys{}'s NRI resolver populates the
+local IP-to-Pod cache in its \texttt{RunPodSandbox} callback, from the
+addresses the runtime reports or by inspecting the sandbox network
+namespace, so local address discovery no longer waits for the
+kubelet--API-server--watch round trip.
+
+Two limits apply. Knowing an address is not enforcing on it: the steering
+path must cover the Pod before its containers run, which depends on set
+updates and callback ordering, not on NRI alone. And the hook is local:
+policies, namespace labels, and remote peers still arrive asynchronously.
+We claim removal of one asynchronous dependency, not zero startup
+latency, and no NRI on/off comparison exists to quantify even that.
+
+\subsection{Policy Changes and Failure Semantics}
+Caching makes policy updates part of the correctness argument. The
+specification leaves the effect of an update on established connections
+implementation-defined~\cite{k8snetworkpolicy}. \sys{}'s strict mode
+scans conntrack, reevaluates supported established flows, and clears the
+accept label where current policy no longer permits the flow, so the next
+packet is queued and re-decided. Revocation latency is watch delivery
+plus scan scheduling, scan duration, and packet arrival, and scan cost
+grows with the flows inspected.
+
+\paragraph{Queue overflow.}
+Any design that decides in userspace behind a bounded kernel queue must
+choose what the kernel does when the queue is full. NFQUEUE offers two
+answers, drop or accept unevaluated~\cite{nfqueueapi}; \sys{} exposes
+the choice as a flag and its queue holds 1,024 packets. This is the
+counterpart of the eager design's overflow choice, where Cilium can lock
+down an endpoint whose policy map is full~\cite{ciliumagentref}: in both
+places the operator trades availability against isolation at a capacity
+boundary. Denied packets are never labeled, so denied traffic is part of
+the queue's load rather than of the cached path. The archived runs did
+not measure queue occupancy or drops and did not approach overload, so
+they characterize neither mode; the single-node experiment in
+Section~\ref{sec:evaluation} is where that boundary would be measured.
+
+\paragraph{Unknown peers fail closed.}
+When the evaluator cannot resolve a remote address to a Pod, the peer is
+\texttt{nil}, and a \texttt{nil} peer matches only \texttt{ipBlock}
+rules. Under default deny the packet is dropped. That is the correct
+isolation behavior and an availability cost: a permitted connection from
+a freshly created remote Pod is denied until the destination node has
+that Pod's metadata. NRI shortens this only for local Pods; for remote
+peers the node depends on watch delivery or on the distribution tier of
+Section~\ref{sec:iptracker}. The benchmark exercises exactly this path: a
+sandbox's first connection is admitted at the gateway node only after
+that node has learned the sandbox's address, so the post-scheduling
+latencies in Section~\ref{sec:evaluation} contain this convergence.
+
+\paragraph{Safety property and trust boundary.}
+The property we want is conditional: for a policy an agent has already
+processed, a newly selected Pod must not send or receive forbidden
+traffic before enforcement applies; a permitted connection may be delayed
+by missing metadata, and that delay is not a violation. The archived runs
+do not establish it. They exercise the permitted sandbox-to-gateway path
+on every Pod and the forbidden path once per cluster, by hand,
+unarchived; missing metadata, label changes, and address reuse are
+untested. The
+trust boundary includes the node kernel, the runtime, the agent, and the
+CNI's binding of addresses to Pods. A workload that can spoof a peer's
+address defeats the evaluator; hostNetwork, privileged Pods, and address
+translation need explicit scope that NFQUEUE and NRI do not provide.
+
+\section{Where the Scaling Cost Moves}
+\label{sec:model}
+Let $I$ be the distinct peer identities a policy selects, $P_{\ell}$ the
+local endpoints it applies to, $d$ the directions materialized, and
+$F_{\ell}$ the active connections tracked on the node. An engine that
+stores one entry per peer identity per direction at each endpoint carries
+\begin{equation}
+E_{\mathrm{endpoint}} \approx dI,\qquad
+E_{\mathrm{node}} \approx dIP_{\ell}.
+\label{eq:materialization}
+\end{equation}
+This describes one representation, not a lower bound: sharing,
+wildcards, aggregation, or a factored match (Section~\ref{sec:related})
+change it, other rules add to it, and entries are not bytes. Under the
+same assumptions a new identity selected by every local endpoint costs
+about $dP_{\ell}$ writes, and a rate $\lambda_I$ of new identities costs
+$dP_{\ell}\lambda_I$ writes per node before dissemination and selector
+recomputation. Replacing Pods that reuse a label set leaves this nearly
+unchanged; fresh-identity churn is a different workload from Pod churn.
+The benchmark tiers vary $I$; whether their churn rounds create fresh
+identities is not recorded.
+
+Deferred evaluation removes the $dIP_{\ell}$ term and keeps everything
+else:
+\begin{equation}
+M_{\mathrm{deferred}} = M_{\mathrm{metadata}} +
+M_{\mathrm{steering}} + M_{\mathrm{conntrack}}(F_{\ell}).
+\end{equation}
+This is an accounting, not a proof of lower total memory: both designs
+carry conntrack, and the userspace Pod and policy indexes can dominate.
+What is removed is materialized permission state; what replaces it is
+work at admission time.
+
+That work has a capacity. Let $\lambda_q$ be the rate of packets reaching
+the queue, including denied attempts and pre-establishment
+retransmissions, and $\mu$ the rate at which the agent returns verdicts.
+The first-order condition for the queue not to grow is
+\begin{equation}
+\rho = \lambda_q/\mu < 1,
+\end{equation}
+and because the queue is 1,024 packets deep, exceeding it is the
+overflow boundary of Section~\ref{sec:design}, not only latency;
+bursts and CPU contention can reach it below $\rho=1$. Our only
+measurement of $\mu$ is the repository's three-node ApacheBench
+run~\cite{knptesting}: 10,000 non-keepalive requests at concurrency 1,000
+completed at 2,317 requests/s, P50 5~ms, P99 3,080~ms dominated by
+connect time, with the kernel logging \texttt{nf\_conntrack: table full}
+at the default 262,144 entries; its charts show queued-packet peaks near
+8,000/s per node and callback durations of 80--120~$\mu$s median and
+170--630~$\mu$s P99. It is a 2024 measurement with no hardware, kernel,
+or agent version recorded, and conntrack exhaustion confounds the tail;
+we treat it as an order of magnitude for one node, not as $\mu$. The
+720-node runs measured neither $\lambda_q$ nor $\mu$.
+
+The favorable regime is therefore precise: a permission graph that is
+large or changing fast relative to the connections actually attempted,
+with $\rho$ well below one on every node. A dense permission graph with
+sparse traffic fits. A dense connection graph, frequent revocation,
+sustained denied traffic, or many short connections does not; there the
+eager engine pays once per identity and the deferred engine pays per
+connection.
+
+\section{Implementation}
+\label{sec:implementation}
+The inspected code is the Go kube-network-policies repository at revision
+\texttt{9984dcd}. The dataplane controller programs nftables over netlink
+and opens NFQUEUE with a maximum queue length of 1,024 packets, a copy
+range of 128 bytes, GSO enabled, and a 100~ms write timeout. These are
+configuration constants, not measured service rates.
+
+The callback times each packet, records the duration in a histogram
+labeled by protocol and family, and counts verdicts by protocol, family,
+and outcome; queue occupancy and drops are exported as well. Callback
+time starts at delivery to userspace, so it excludes queueing before
+delivery and the verdict's return path; it is not connection-setup
+latency as an application sees it. None of these series exist for the
+archived runs: the deployed Kindnet build exposes no metrics port, and
+every agent query in the harness returned no samples. DNS, ICMPv6
+neighbor discovery, and loopback exceptions are additional rules omitted
+from Figure~\ref{fig:architecture}.
+
+The repository builds several agent flavors. The standard flavor queues
+only traffic to or from managed addresses. The IPTracker flavor, at the
+same revision, returns \emph{divert-all} from \texttt{ManagedIPs}: it
+watches NetworkPolicy objects but has no Pod informer from which to
+enumerate selected local Pods, so it queues every forwarded packet not
+already accepted by conntrack, and the queue-load model applies to a
+larger traffic fraction. The NRI resolver is an alternate source of local
+Pod records, added and removed by runtime callbacks; namespace metadata
+still comes from the API view.
+
+One naming distinction is essential for reading the evaluation. \sys{}
+names the engine inspected here; the benchmark labels complete network
+stacks \emph{Kindnet} and \emph{Cilium}. The \sys{} cluster was created
+with kops's \texttt{kindnet: \{\}} networking, patched to
+\texttt{kindnet:v1.0.1} with an NRI socket mount by
+\path{scripts/create-netpol.sh}; the repository's standalone install
+manifest pins \texttt{kube-network-policies:v1.1.0}. Which policy
+binary and flags were effective in each Kindnet run is not archived, and
+neither image is matched to revision \texttt{9984dcd}. The latency
+differences in Section~\ref{sec:evaluation} are differences between
+stacks, not attributable solely to the code described here.

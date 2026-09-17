@@ -1,0 +1,136 @@
+\begin{abstract}
+NetworkPolicy binds permissions to labels, and labels to Pods that are
+created and replaced continuously. Engines that materialize an entry per
+peer identity at each endpoint carry state proportional to endpoints
+times identities, regardless of who communicates. kube-network-policies
+(\sys{}) places the work elsewhere. nftables steers uncached traffic of
+policy-selected Pods to NFQUEUE, a userspace evaluator decides when a
+connection is attempted, and an accepted verdict is stored as a conntrack
+label so the kernel forwards the rest of the connection. Local Pod
+addresses arrive through the runtime's NRI hooks rather than the API
+server. We compare \sys{} with Cilium on a 720-worker cluster creating
+35,000 Pods in a bidirectional-mesh identity sweep whose sandboxes block
+until a permitted TCP connection succeeds, so post-scheduling latency
+bounds time to first permitted communication. \sys{} completes the
+35,000-identity mesh tier that Cilium's producer excluded on predicted
+policy-map capacity (all Pods Running, 421~s P99, two startup-SLO
+failures). At 700 and 3,500 identities its P99 is 5.33 and 2.79~s, within
+2.4~s of Cilium, at 2.5--3$\times$ lower achieved Pod throughput. At 7
+identities with 5,000 Pods per ReplicaSet its P99 is 151~s against
+Cilium's 6.8~s, unexplained. Each tier has one trial and no agent metrics.
+We show where the eager cross-product goes and what moving it costs; we
+do not show an admission-latency advantage.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+A Pod is the unit of isolation in Kubernetes and also the unit of change.
+Deployments roll, jobs finish, sandboxes are replaced, and each event
+changes who may talk to whom. NetworkPolicy expresses permissions through
+Pod and namespace labels, ports, and address ranges; the addresses that
+carry traffic are assigned later and independently. An enforcement engine
+must join policy with current workload metadata on every node hosting a
+selected Pod, isolate a new Pod before its containers start, and keep
+doing both while packets arrive. A service that lives for hours amortizes
+this setup; a sandbox that lives for seconds does not.
+
+The datapath question is usually framed as lookup speed: chains against
+sets, iptables against nftables against eBPF. That misses where the cost
+has moved. nftables applies incremental updates proportional to what
+changed~\cite{winship2025nftables}; Open vSwitch sends misses to userspace
+and caches results in the kernel~\cite{pfaff2015ovs}; eBPF maps let
+userspace update keyed state without reloading code~\cite{linuxbpfmaps}.
+All three make the lookup cheap. None decides how much state must exist
+before a Pod can communicate, or on how many nodes. An engine that stores
+one entry per peer identity per direction at each endpoint carries state
+proportional to identities times local endpoints
+(Section~\ref{sec:model}), and each new identity is a write to every
+endpoint whose policy selects it. Identity sharing among equally labeled
+Pods limits this; label cardinality and broad selectors restore it. What
+matters is distinct identities, permission-graph density, and churn, not
+Pod count.
+
+\sys{} does not materialize permitted peers. nftables records which local
+addresses are subject to policy and sends packets with no cached decision
+to NFQUEUE. A userspace evaluator resolves both addresses to Pod metadata,
+applies the NetworkPolicy semantics, and returns a verdict. An accept
+verdict also sets a conntrack label, and a kernel rule then accepts any
+packet whose connection carries the label in established or related
+state, so the agent sees a connection roughly once. Denied packets
+receive no label. Local Pod addresses reach the agent through the
+runtime's NRI \texttt{RunPodSandbox} hook without waiting for the kubelet
+to publish them; remote metadata still arrives through API watches.
+
+The research question is whether this trade is favorable for clusters
+with many identities and high churn, not whether userspace is faster than
+the kernel; per packet it is slower. The trade replaces a cross-product
+of identities and endpoints, maintained eagerly on every node, with
+per-connection work proportional to communication actually attempted,
+plus metadata and conntrack that both designs carry. It also introduces a
+bounded queue whose failure policy defaults to open
+(Section~\ref{sec:design}).
+
+Our evidence is archived ClusterLoader2 runs on a 720-worker
+\texttt{n2-standard-4} cluster creating 35,000 Pods at a configured
+500~QPS, comparing Cilium v1.20.1 with Kindnet v1.0.1, which bundles
+\sys{}. Every sandbox has a \texttt{wait-for-gateway} init container that
+loops until a permitted TCP connection to the gateway Service succeeds
+under default deny, so a Pod is Running only after the source node's
+egress evaluation and the gateway node's ingress evaluation have both
+admitted its first connection. The post-scheduling latency we report
+therefore bounds time to first permitted communication, including
+propagation of the new Pod's address to the gateway node. The evidence
+supports five observations, none of which stands in for another.
+\begin{enumerate}
+\setlength{\itemsep}{0pt}
+\item Cilium's completed identity sweeps show no rising latency curve:
+open-gateway P99 after scheduling falls from 5.930~s at 7 identities to
+1.990~s at 35,000, hub-and-spoke from 6.370 to 2.033~s, and mean worker
+CPU stays within 0.51--0.63 cores in every tier of every family.
+\item The 35,000-ReplicaSet tiers halve achieved Phase-1 Pod throughput,
+from roughly 280--330 to 170 Pods/s, and raise cluster-scoped Pod LIST P99
+from 14--19 to 28.8~s; the bottleneck there is controller fan-out, not
+the datapath.
+\item Cilium's bidirectional mesh completes at 7, 700, and 3,500
+identities (6.767, 2.934, 2.279~s P99). Its 35,000-identity tier was
+excluded before execution: two entries per peer identity give 70,000
+entries per endpoint against a 65,536-entry policy-map maximum. That is a
+predicted capacity exclusion, not an observed failure.
+\item Two Cilium admission failures are recorded: v1.18.6 stranded 19 of
+35,000 Pods at 700 identities, attributed to a policy-cache race fixed in
+v1.20.0~\cite{cilium7515}, and a v1.20.1 hub-and-spoke raw-Pod burst
+aborted with 29,306 Running and 5,694 stranded.
+\item \sys{}'s mesh sweep, matched to Cilium's generator at the first
+three tiers, reaches 151.479, 5.331, and 2.791~s P99. Its unmatched
+35,000-identity raw-Pod mesh tier completes with every Pod Running at
+421.410~s P99 and two startup-SLO failures. At 700 and 3,500 identities
+\sys{} created Pods at 103--124 Pods/s where Cilium created 302--328 on
+the same configured QPS; the artifacts do not record why.
+\end{enumerate}
+
+We do not claim an admission-latency advantage over Cilium; the evidence
+does not show one. \sys{} is slower at every matched tier, by 0.5--2.4~s
+at 700 and 3,500 identities and by 22$\times$ at 7. The throughput gap
+confounds the comparison in \sys{}'s favor, since a slower generator
+produces smaller per-node bursts. Each tier has one trial. Every
+agent-level Prometheus query returned no samples because the deployed
+Kindnet build exposes no metrics port, so verdict rate, queue occupancy,
+drops, and agent CPU are absent. The sweep establishes that \sys{} has no
+per-endpoint state bound that excludes the dense tier, and that its
+post-scheduling P99 does not rise from 700 to 3,500 identities.
+
+The paper makes three contributions at three levels of evidence: from
+source inspection of revision \texttt{9984dcd}, a description of the
+enforcement decomposition, its queue-overflow trade-off, and its
+unknown-peer semantics (Sections~\ref{sec:design}
+and~\ref{sec:implementation}); an analytical model of where eager
+permission state goes under deferred evaluation and of the admission
+capacity that replaces it (Section~\ref{sec:model}), whose single
+service-rate data point is a repository microbenchmark of unrecorded
+provenance; and an analysis of the archived benchmark collection across
+both engines, including the newly executed \sys{} sweep
+(Section~\ref{sec:evaluation}), with the missing measurements enumerated
+in Section~\ref{sec:gaps}. Section~\ref{sec:background} states the
+problem, Section~\ref{sec:related} places the design among reactive
+caches and factored kernel representations, and
+Section~\ref{sec:discussion} covers metadata distribution.

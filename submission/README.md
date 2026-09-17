@@ -26,23 +26,42 @@ absence of any KNP identity-sweep data, missing resource metrics, an
 unquantified NFQUEUE verdict rate, and an unexamined fail-open bypass. Both
 repositories were scanned for anything that could close those gaps:
 
-- **Recovered and added**: the complete 4-tier Kindnet / `kube-network-policies`
-  (KNP) Bidirectional Mesh sweep across 7, 700, 3,500, and 35,000 raw-Pod
-  identities at 500 QPS (`artifacts_pods/kindnet/mesh-sweep/`); Phase-1
-  scheduling throughput and worker CPU for every September tier and all Kindnet
-  QPS-500 runs (paper Table 2); cluster Pod LIST P99 latency; the exact cause of
-  the QPS 50/100 JUnit asterisks (teardown deletion timeouts); the archived
-  Cilium v1.18.6 700-identity abort and its fix in v1.20.0; the KNP `docs/testing`
+- **Recovered and added**: a Kindnet / `kube-network-policies` (KNP)
+  bidirectional mesh sweep (`artifacts_pods/kindnet/mesh-sweep/`, commit
+  `5b152f2`) matched to the Cilium mesh generator at 7, 700, and 3,500
+  identities plus an unmatched 35,000 raw-Pod mesh tier; Phase-1 scheduling
+  throughput and worker CPU for every September tier and all Kindnet QPS-500
+  runs (paper Table 2); cluster Pod LIST P99 latency; the exact cause of the
+  QPS 50/100 JUnit asterisks (teardown deletion timeouts); the archived Cilium
+  v1.18.6 700-identity abort and its fix in v1.20.0; the KNP `docs/testing`
   ApacheBench microbenchmark and Prometheus charts as an indicative verdict-rate
-  bound; PR 218 IPTracker integration-test numbers; the verified Cilium v1.20.1
-  `cilium-config` override (`bpf-policy-map-max: 65536`, documented in
-  `run-mesh-sweep.sh` line 36), explaining why unidirectional 35k succeeded while
-  mesh 35k exceeded capacity; the IPTracker flavor's divert-all behavior; the
-  benchmark manifest's fail-open default.
-- **Confirmed absent and now highlighted in the paper (Table 4)**: memory metrics;
-  policy-agent CPU isolated from node total; agent `/metrics` at scale; live BPF
-  policy-map dumps; image digests per Kindnet run; agent logs for the Cilium abort;
-  an NRI on/off ablation.
+  bound; PR 218 IPTracker integration-test numbers; the `bpf-policy-map-max`
+  value of 65,536 as documented in the `run-mesh-sweep.sh` header and
+  corroborated by the completed unidirectional 35k tiers (the ConfigMap itself
+  is not archived); the IPTracker flavor's divert-all behavior; the benchmark
+  manifest's fail-open default.
+- **Validated September 17 (enforcement)**: every sandbox Pod template has a
+  `wait-for-gateway` init container that blocks until a permitted TCP connection
+  to the gateway Service succeeds, so `schedule_to_run` bounds
+  first-permitted-communication latency including cross-node metadata
+  convergence; `scripts/verify-netpol.sh` checks deny and allow once per
+  cluster on an idle cluster, unarchived. The paper's earlier statement that
+  `schedule_to_run` does not measure first permitted communication was wrong
+  and is corrected.
+- **Validated September 17 (Kindnet mesh sweep)**: tiers 2-3 are 5.33 / 2.79 s
+  P99 (0.5-2.4 s slower than Cilium at 2.5-3x lower achieved Pods/s); tier 1 is
+  151 s P99 against Cilium's 6.8 s on the identical generator; tier 4 completes
+  35,000 raw Pods with 0 stranded at 421 s P99 and 2 startup-SLO JUnit
+  failures, and has no matched Cilium run (Cilium's raw-Pod run used the
+  hub-and-spoke policy). The six KNP agent metric queries and the kubelet CNI
+  query returned no samples in every tier (the Kindnet build exposes no metrics
+  port). The mesh-sweep README's "under 50 seconds" and "0 CNI errors" are not
+  supported by the artifacts.
+- **Confirmed absent and now highlighted in the paper (Table 4)**: agent CPU,
+  memory, verdict rate, latency, drops; cause of the KNP 151 s and 421 s tails;
+  cause of the KNP throughput deficit; a matched 35k pair; repeat trials; live
+  BPF policy-map dumps and the effective ConfigMap; image digests per run;
+  logs for both aborts; an NRI on/off ablation.
 - **Added analysis**: a security paragraph on fail-open plus queue overflow
   plus uncached denials as a tenant-triggerable bypass, the unknown-remote-peer
   deny semantics, and related work on conjunctive-match (OVS/Antrea) and

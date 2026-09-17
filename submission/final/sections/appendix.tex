@@ -1,0 +1,160 @@
+\section{Evidence Provenance}
+\label{sec:provenance}
+This appendix is the provenance guide for the non-submission exercise:
+for every table, figure, and quoted count in Section~\ref{sec:evaluation}
+it names the file that was read and the key that was taken from it.
+Paths are relative to the benchmark repository unless stated otherwise.
+
+\paragraph{Archived numeric results.}
+The extractor is \path{submission/analyze.mjs}. The current extraction
+covers all 66 benchmark run directories and 59 startup reports and is
+recorded in \path{submission/upstream/inventory.json},
+\path{submission/upstream/startup.csv}, and
+\path{submission/upstream/extracted-results.md}. Startup percentiles are
+the \texttt{Perc50}, \texttt{Perc90}, and \texttt{Perc99} fields (in
+milliseconds) of the \texttt{dataItems} entries whose
+\texttt{labels.Metric} is \texttt{create\_to\_schedule},
+\texttt{schedule\_to\_run}, or \texttt{pod\_startup} in each run's
+\texttt{PodStartupLatency\_TotalPodStartupLatency\_*.json}. Failure
+counts are \texttt{<failure>} elements in each run's \path{junit.xml}.
+Run directory names do not establish tested software versions; those
+come from \path{agentic-cilium.k8s.local.yaml},
+\path{agentic-netpol.k8s.local.yaml}, and
+\path{scripts/create-netpol.sh}, and no image digest is archived.
+
+\paragraph{Table~\ref{tab:identity} and Figure~\ref{fig:scaling}.}
+The Cilium open-gateway rows are the four directories under
+\path{artifacts_pods/cilium/identity-sweep/}
+(\path{7-identities-5000ppr}, \path{700-identities-50ppr},
+\path{3500-identities-10ppr}, \path{35000-identities-1ppr}). The
+hub-and-spoke rows are \path{artifacts_pods/cilium/microsegmentation/}
+\path{tier1-7-identities-5000ppr}, \path{tier2-700-identities-50ppr},
+\path{tier3-3500-identities-10ppr}, and
+\path{tier4-35000-identities-1ppr-rs}. The Cilium mesh rows are
+\path{artifacts_pods/cilium/mesh-sweep/tier1-7-identities-5000ppr},
+\path{tier2-700-identities-50ppr}, and
+\path{tier3-3500-identities-10ppr}; their sibling \path{*-initial}
+directories hold hook logs only and are the three hook-only attempts of
+Section~\ref{sec:eval-method}. The \sys{} mesh rows
+are \path{artifacts_pods/kindnet/mesh-sweep/tier1-7-identities-5000ppr},
+\path{tier2-700-identities-50ppr}, \path{tier3-3500-identities-10ppr},
+and \path{tier4-35000-identities-rawpods}. Every \sys{} tier's
+\path{generatedConfig_agentic-sandboxes.yaml} sets
+\texttt{SandboxPeerMode: mesh}; the Cilium raw-Pod directory
+\path{artifacts_pods/cilium/microsegmentation/tier4-35000-identities-rawpods}
+does not, which is why the two raw-Pod rows are not a matched pair. The
+\sys{} tier-4 \path{junit.xml} records the two startup-SLO failures. The
+right-hand panel of Figure~\ref{fig:scaling} is the model of
+Section~\ref{sec:model}, cross-checked against the guard in
+\path{scripts/run-mesh-sweep.sh} and the policy
+\path{manifests/policy-scenarios/scenario-c-mesh-bidirectional.yaml}.
+
+\paragraph{Table~\ref{tab:qps}.}
+The Cilium rows are the primary runs under
+\path{artifacts_pods/cilium/qps-50}, \path{qps-100}, \path{qps-200}, and
+\path{qps-500/verified-run}; the separate Cilium trial is
+\path{qps-500/repeat-run}. The Kindnet rows are
+\path{artifacts_pods/kindnet/baseline-sweep/qps-*}. The final tuning
+bundle is
+\path{artifacts_pods/kindnet/500qps-optimizations/5-v1.0.1-plus-nri-plus-apf-exempt/};
+its four predecessors are the sibling directories \path{1-} through
+\path{4-}. The teardown-timeout diagnosis of the asterisked rows is read
+from the \texttt{WaitForOldPodsDeleted-Final} failure messages in the
+\path{junit.xml} files of the QPS 50 and 100 directories of both
+families.
+
+\paragraph{Table~\ref{tab:resources}: throughput, CPU, and API latency.}
+Phase-1 Pods/s are the top-level \texttt{perc50} and \texttt{perc90} of
+\texttt{Phase1SchedulingThroughput\_*.json} in each run directory (the
+tier-4 peak is its \texttt{max}). Worker CPU is read from
+\texttt{GenericPrometheusQuery Worker Node CPU Utilization\_*.json}
+under \texttt{dataItems[0].data}: the table uses
+\texttt{mean\_instantaneous\_node\_cpu\_cores} and
+\texttt{p99\_instantaneous\_node\_cpu\_cores}, and the tier maxima
+quoted in Section~\ref{sec:eval-resources} are
+\texttt{max\_instantaneous\_node\_cpu\_cores}. The
+Kindnet QPS-500 baseline row uses \texttt{mean\_node} and
+\texttt{p99\_node} from the July rate-based query and is flagged as
+such. Pod LIST P99 is the cluster-scoped \texttt{pods} \texttt{LIST} row
+of \texttt{APIResponsivenessPrometheus\_simple\_*.json}. The
+\texttt{max\_kindnetd\_cpu\_cores} term in the saved CPU query has no
+samples in any run. No value in the table was transcribed from a
+Markdown summary.
+
+\paragraph{Enforcement gate.}
+The \texttt{wait-for-gateway} init container is defined in
+\path{manifests/agentic-sandbox/manifests/sandbox-pod.yaml} and
+\path{sandbox-replicaset.yaml}. The policies that make the gate a
+permitted-connection test are \path{global-sandbox-policy.yaml} (sandbox
+egress to \texttt{group: gateway}, TCP 80) and
+\path{gateway-policy.yaml} (gateway ingress from \texttt{group:
+sandbox}), with \path{default-deny-policy.yaml} applied in every archived
+run. The one-shot negative check is \path{scripts/verify-netpol.sh}; no
+output of it is archived, and no run script calls it.
+
+\paragraph{\sys{} agent queries.}
+The six \texttt{GenericPrometheusQuery Kube Network Policies *} files
+(CPU Usage, Memory Usage, Packet Processing Time, Packet Verdicts Rate,
+Queue Drops Rate, User Drops Rate) and the
+\texttt{GenericPrometheusQuery Kubelet CNI Plugin Operations Latency}
+file in all four \sys{} mesh tiers contain \texttt{"dataItems": null}.
+The queries are defined in
+\path{manifests/agentic-sandbox/measurements/knp-measurements.yaml};
+\path{scripts/query-kindnet-metrics.sh} records that the deployed Kindnet
+build exposes no metrics port. The \texttt{Sandbox Pod Density Per Node}
+query in tier 4 reports \texttt{max\_pods\_per\_node} of 23,789, which is
+almost certainly pending Pods bucketed under an empty node label; it is
+not a real node and is not cited.
+
+\paragraph{Archived v1.18.6 attempt.}
+\path{artifacts_pods/archive/v1.18.6-identity-runs/} holds a complete
+7-identity run and a 700-identity directory containing only
+\path{cl2-metadata.json} and the generated configuration. The
+34,981/19 counts and the issue-7515 attribution are from
+\path{benchmark_results.md}, not from artifacts; no logs from the
+attempt were retained.
+
+\paragraph{Outcome records.}
+Revision \texttt{0442dce} adds
+\path{artifacts_pods/cilium/microsegmentation/tier4-35000-identities-rawpods/README.md},
+the source of the 29,306/5,694 completion counts and the stated HTTP 429
+and identity-exhaustion diagnosis. Revision \texttt{f998224} adds
+\path{artifacts_pods/cilium/mesh-sweep/README.md}, documenting the
+unexecuted Cilium mesh tier. Revision \texttt{5b152f2} adds
+\path{artifacts_pods/kindnet/mesh-sweep/}: three ReplicaSet-paced \sys{}
+tiers matched to the Cilium mesh generator and one raw-Pod tier. Two
+statements in that directory's \path{README.md} are not supported by its
+own artifacts and are not used here: ``scheduler placed all pods in
+under 50 seconds'' (the archived \texttt{create\_to\_schedule} P99 is
+106.691 s) and ``0 CNI errors'' (the CNI-latency query returned no
+samples, so there is no metric behind the count). The README also omits
+the tier-4 JUnit SLO failures and the tier-1 latency. The 65,536 map
+limit is documented only in the header comment of
+\path{scripts/run-mesh-sweep.sh}; the \texttt{cilium-config} ConfigMap
+it reads at run time is not archived.
+
+\paragraph{Original charts.}
+The input figure \path{figures/fig2_identity_cardinality_sweep.png}
+mixes measured quantiles, Kindnet tier values with no located source
+run, and a failure bar; \path{figures/fig2_topological_scaling_p99.png}
+contains a 94.3-second overflow value and a kernel-set description of
+\sys{} that the audited evidence does not support. Both are preserved as
+author input and neither is reproduced here. Figure~\ref{fig:scaling} is
+typeset directly from the audited quantiles and the explicitly
+conditional capacity model.
+
+\paragraph{Implementation.}
+Paths in the companion kube-network-policies repository, inspected at
+\texttt{9984dcd}, are \path{pkg/dataplane/controller.go} (queue
+configuration, overflow mode, postrouting and input chains),
+\path{pkg/cmd/cmd.go} (flag defaults),
+\path{pkg/networkpolicy/networkpolicy.go} (\texttt{nil}-peer selector
+semantics, managed-IP set),
+\path{plugins/iptracker/iptracker_networkpolicy.go} (divert-all),
+\path{pkg/podinfo/nri/resolver.go}, \path{pkg/ipcache/{client,bbolt,lru}.go},
+and \path{docs/testing/README.md} with its two PNG charts. Benchmark-side
+deployment facts are from \path{manifests/kube-network-policies-install.yaml}
+and \path{scripts/create-netpol.sh}. Source behavior has not been equated
+to the benchmark binaries. \path{submission/evidence-audit.md} records the
+claim-level audit and \path{submission/author-guide.md} the prioritized
+remaining checks.

@@ -1,0 +1,239 @@
+\section{Related Work}
+\label{sec:related}
+
+The right ancestor of \sys{} is not another consumer of a kernel packet
+API; it is reactive flow processing. Open vSwitch classifies in
+userspace and caches the result in a kernel flow table, and Pfaff et
+al.\ are explicit about what that split costs when the cache
+misses~\cite{pfaff2015ovs}. NVP realized distributed logical networks
+on that substrate~\cite{koponen2014nvp}, and OVN's stateful ACLs use
+\texttt{allow-related} backed by connection tracking, so a decision
+taken on a connection's first packet is inherited by the rest of
+it~\cite{ovnacl}. Userspace miss handling, cached verdicts, and
+conntrack-backed stateful filtering are all prior art, and this paper
+claims none of them. What it claims is narrower: evaluation of
+Kubernetes NetworkPolicy semantics in userspace at connection
+admission, without materializing the permitted-peer set at each
+endpoint in advance, with local Pod metadata taken from the container
+runtime rather than the API server. The novelty, such as it is, lies in
+the placement and the object cached, not in the mechanism.
+
+Andromeda and ONCache are the nearest treatments of what to cache and
+when to invalidate it. Andromeda separates its flow-processing paths so
+that provisioning, isolation, performance, and feature velocity can be
+traded independently~\cite{dalton2018andromeda}; ONCache finds work
+repeated across the layers of a container overlay, filtering included,
+and caches the invariant part in eBPF~\cite{oncache2025}. \sys{} caches
+one object, the per-connection verdict, and its invalidation story is
+the strict-mode conntrack scan of Section~\ref{sec:design}. KUBEDIRECT
+names API-mediated controller communication as a serverless scaling
+bottleneck and builds state management for a more direct
+path~\cite{kubedirect2026}; the same observation motivates \sys{}'s use
+of NRI, which removes one asynchronous round trip for one class of
+local facts and provides none of KUBEDIRECT's controller coordination.
+Role-based microsegmentation infers roles and policies from observed
+traffic~\cite{mani2025microsegmentation}; it produces the policy an
+engine then has to enforce and says nothing about the cost of enforcing
+it.
+
+The point most likely to be lost in Section~\ref{sec:model} is that
+eager per-peer expansion is one kernel-resident representation among
+several, and not the one the other kernel-based enforcers cited here
+use. Open
+vSwitch's conjunctive match installs a rule with $n$ sources and $m$
+destinations as $n+m$ flows sharing a \texttt{conj\_id} rather than
+$n\times m$ flows~\cite{ovsfields}, and Antrea compiles NetworkPolicy
+exactly this way, marking established connections in conntrack so that
+only new flows walk the policy tables~\cite{antreapipeline}: the same
+evaluate-once-per-connection property this paper attributes to NFQUEUE
+plus conntrack, obtained without leaving the kernel. Calico's Felix
+compiles selectors into ipsets referenced by a bounded number of
+iptables or nftables rules, so per-endpoint state grows with rules
+rather than peers~\cite{calicoarch}. nftables sets offer the same
+factoring to anyone; Sutter's measurements~\cite{sutter2017nftables}
+and kube-proxy's incremental nftables updates~\cite{winship2025nftables}
+exist because lookup cost and update cost are separate questions. eBPF
+maps are likewise keyed state that userspace updates
+incrementally~\cite{linuxbpfmaps}; the $2I$ entries per endpoint of
+Equation~\ref{eq:materialization} describe how Cilium chooses to key
+its per-endpoint policy map by security
+identity~\cite{ciliumidentities} under a \texttt{--bpf-policy-map-max}
+that defaults to 16,384, tops out at 65,536, and can optionally lock
+the endpoint down on overflow~\cite{ciliumagentref}. That is one
+representation under one configuration. A capacity comparison that
+means to say something about kernel enforcement as a class needs a
+factored-kernel baseline, and this paper's does not have one.
+
+Finally, a distribution tier between the datastore and the node agents
+is established practice: Calico's Typha holds datastore state,
+deduplicates events, and fans updates out so that each agent does not
+carry its own load against the datastore~\cite{calicotypha}. IPTracker
+has to be judged on its representation, caching, and recovery behavior;
+the tier itself is not a contribution.
+
+\section{Discussion and Future Work}
+\label{sec:discussion}
+
+\subsection{Compact Metadata Distribution with IPTracker}
+\label{sec:iptracker}
+
+Declining to run a distributed identity allocator does not make
+distributed metadata go away. If $N$ agents each watch every Pod and
+Pods change at rate $U$, the API server delivers on the order of $NU$
+events; filtering, the watch cache, and event size move the constant of
+that first-order count, not the product. IPTracker, introduced in PR
+190~\cite{iptracker190}, moves the full Pod watch to $R$ distributors
+and exposes compact IP-to-Pod records to the agents, so full Pod
+subscriptions against the API server fall from $N$ to $R$. Other
+subscriptions remain, and the fan-out moves rather than disappears: the
+inspected client watches the entire compact-record prefix, a smaller
+object delivered to the same number of subscribers rather than a
+selective subscription to the peers a node will actually contact.
+
+Records are Protocol Buffers, optionally persisted in bbolt with an
+in-memory LRU in front~\cite{iptrackerbolt}. Kubernetes already speaks
+protobuf; the distinction is the reduced schema and the topology. The
+details are less flattering. The LRU admits updates as well as lookups,
+so churn among peers a node never contacts can evict the ones it
+contacts constantly; store access is serialized under a mutex, coupling
+write bursts to lookup latency; the full sync clears local state and
+reinserts the prefix, which is neither an atomic snapshot replacement
+nor a constant-memory bootstrap; and a bounded object cache bounds
+neither process nor machine memory once bbolt's mapping, page cache,
+and full-sync buffers are counted. Issue 114659 documents why informer
+memory is worth reducing~\cite{k8s114659}; it does not measure this
+implementation.
+
+The only quantitative data are single-client integration logs posted
+with PR 218~\cite{iptracker218}: 10,000 records gave 643 ms average
+propagation, 35 MB of server Go heap, and a 1 MB client store; 40,000
+records at 30,000 writes/s gave 6.6 s and 174 MB, with the etcd
+maintainer in the thread reporting watch stalls above that size; 10
+million records throttled to 1,024 writes/s finished in 9,828 s at
+43 ms average propagation, 24.7 GiB of server heap, and a 1.25 GiB
+client store. One process, one machine, no packet path, an LRU sized to
+hold every record: these bound neither agent memory under eviction nor
+fan-out to hundreds of clients. They do show that the distribution
+tier, not the client, holds the bulk of the state, and that in the
+tested range propagation tracks write rate rather than record count.
+Before persisted records serve as authorization metadata the design
+owes answers on revision recovery after compaction, reflector failover,
+disk loss, and above all IP reuse: a stale record for a reused address
+is a policy bypass, not an availability delay. The IPTracker plugin
+flavor also diverts all forwarded traffic to the queue
+(\texttt{ManagedIPs} reports every address as managed), so its
+$\lambda_q$ differs from the one in Section~\ref{sec:model}. IPTracker
+is implemented future work; no result in Section~\ref{sec:evaluation}
+used it or supports it.
+
+\subsection{Testing the Architectural Hypothesis}
+
+Section~\ref{sec:gaps} lists what is missing; this is the order in
+which we would collect it, by how much each result could change the
+conclusion. First, rebuild Kindnet with the agent metrics server
+enabled and rerun one tier, preferably 7 identities at 5,000 Pods per
+ReplicaSet; all six agent queries returned no samples, so no run has a
+$\lambda_q$, a $\mu$, drop counts, or agent CPU and memory. Second,
+collect the \texttt{wait-for-gateway} init container's
+\texttt{Latency:} lines, which every sandbox already logs and the
+harness did not keep; large values on the slow Pods implicate metadata
+convergence or the verdict path, small ones exonerate both and point at
+kubelet or the runtime. Third, equalize achieved Pod throughput or
+explain why the \sys{} cluster created 103--124 Pods per second against
+Cilium's 302--328 on identical control-plane settings; a slower creator
+means a smaller per-node burst, which flatters the tail, so the
+closeness at 700 and 3,500 identities proves less than it appears to.
+Fourth, a matched pair at 35,000 identities, a Cilium raw-Pod mesh run
+or a \sys{} run with one Pod per ReplicaSet. Fifth, repeat trials; with
+one sample per tier the 0.5 s and 2.4 s differences are
+indistinguishable from noise. Sixth, a \texttt{cilium-dbg bpf policy
+get} dump and the effective \texttt{cilium-config} from a gateway node,
+so that Figure~\ref{fig:scaling} rests on a measurement rather than the
+indirect argument of Section~\ref{sec:evaluation}. Seventh, a
+single-node connection microbenchmark with a denied-traffic mix, run
+into overload in both queue modes, since the capacity boundary of
+Section~\ref{sec:design} is an overload point nobody has
+measured. Last, vary label sharing and workload freshness independently
+at fixed live-Pod count, to separate identity dissemination from Pod
+churn.
+
+The disconfirming outcomes are easy to state. Agent saturation under
+burst, or \texttt{Latency:} lines that account for the tail, would
+attribute the 151 s and 421 s tails to deferred evaluation rather than
+a confound; equalized throughput that widens the gap at 700 and 3,500
+identities would remove the one place where \sys{} currently looks
+competitive; a factored-kernel baseline completing the 35,000-identity
+mesh cheaply would reduce the capacity claim to a statement about one
+representation; and a denied-traffic microbenchmark that fills the
+1,024-packet queue at a connection rate a real tenant could produce
+would turn the overflow boundary from a constant in the source into a
+measured limit.
+
+\subsection{Limits of the Present Claim}
+
+The design does not promise unlimited identities, constant total
+memory, zero startup delay, or resource use independent of topology. It
+removes one eager cross-product by keeping semantic evaluation in
+userspace and caching the outcome per connection, a good trade only
+where the admission and consistency costs are acceptable. The \sys{}
+mesh sweep supports a capacity statement: a tier the Cilium harness
+excluded on predicted per-endpoint map demand completes under \sys{}
+with all 35,000 Pods Running and none stranded, and going from 700 to
+3,500 identities does not raise its P99 (5.331 s to 2.791 s). It does
+not support an admission-latency statement: \sys{} is slower than
+Cilium at every matched tier, by 2.4 s and 0.5 s where it is close and
+by a factor of 22 at 7 identities (151.479 s against 6.767 s); the
+raw-Pod tier records 421.410 s with two startup-SLO failures; achieved
+Pod throughput is 2.5--3$\times$ lower for reasons nobody recorded;
+every tier is one trial; and the agent metrics are empty. Enforcement
+is verified only on the positive path, by the gateway gate every
+sandbox passes; the negative path was checked once per cluster by
+\path{scripts/verify-netpol.sh}, unarchived.
+
+Two further caveats. Results are version-specific on both sides: an
+archived Cilium v1.18.6 run stranded 19 Pods at 700 identities on a
+policy-cache race fixed in v1.20.0~\cite{cilium7515}, and the \sys{}
+figures come from one Kindnet v1.0.1 build with no metrics port and
+unrecorded agent flags. And the semantics enforced are looser than the
+discussion sometimes implies: NetworkPolicy leaves the effect of a
+policy update on established connections
+implementation-defined~\cite{k8snetworkpolicy}, so caching an accepted
+verdict for the life of the connection is conforming on its own, strict
+mode's conntrack scan is a choice \sys{} makes rather than a
+requirement the API imposes, and an engine that does revoke is equally
+within the API. Comparing revocation cost compares design choices, not
+conformance.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+NetworkPolicy at scale is a joint problem of representation, placement,
+and synchronization, and the three cannot be optimized one at a time. A
+fast kernel lookup does not make workload admission cheap, and a flat
+latency curve does not mean the policy state has no ceiling. NFQUEUE,
+conntrack, and NRI permit a different decomposition: interpret the
+policy when communication is attempted, keep the accepted decision in
+the kernel's connection state, and learn local Pod addresses from the
+runtime rather than from the API server. None of these mechanisms is
+new, and the decomposition inherits the known weakness of reactive
+processing: its cost concentrates in the miss bursts.
+
+The archived experiments on 720 workers and 35,000 Pods show both
+sides. Cilium's completed sweeps hold low post-scheduling latency and
+flat worker CPU across their feasible region, halve achieved throughput
+at 35,000 ReplicaSets, exclude the 35,000-identity bidirectional mesh
+on predicted map capacity, and stranded 5,694 Pods in one hub-and-spoke
+raw-Pod burst. The \sys{} sweep completes the excluded tier with every
+Pod Running, stays within 2.4 s of Cilium's P99 at 700 and 3,500
+identities, and records 151 s and 421 s tails in its two burst tiers
+that the artifacts cannot attribute, at a Pod-creation rate
+2.5--3$\times$ below Cilium's that they cannot explain either. Because
+every sandbox gates on a permitted TCP connection to the gateway before
+it reports Running, these latencies contain the first permitted
+cross-node communication; that makes them a more honest measure than
+container startup, and it makes the unexplained tails the most
+important open item, since they are tails on the very quantity the
+design claims to improve. Completing the comparison requires the
+measurements of Table~\ref{tab:gaps}, beginning with an agent that
+exposes its metrics, the init-container latencies the sandboxes already
+record, and a second trial of the matched tiers.
